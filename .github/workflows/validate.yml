@@ -17,6 +17,9 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
+          # Only required to be listed in the default HACS store; installing
+          # as a custom repository works without them.
+          ignore: brands description topics
 
   tests:
     runs-on: ubuntu-latest
