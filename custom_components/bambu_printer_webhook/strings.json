@@ -33,5 +33,22 @@
       "already_configured": "This webhook is already set up.",
       "reconfigure_successful": "The webhook has been updated."
     }
+  },
+  "entity": {
+    "sensor": {
+      "last_delivered": {
+        "name": "Last delivered"
+      }
+    },
+    "binary_sensor": {
+      "delivery_problem": {
+        "name": "Delivery",
+        "state_attributes": {
+          "last_error": {
+            "name": "Last error"
+          }
+        }
+      }
+    }
   }
 }
