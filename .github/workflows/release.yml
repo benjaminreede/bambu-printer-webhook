@@ -1,0 +1,28 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the version matches the tag
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          manifest=$(jq -r .version custom_components/bambu_printer_webhook/manifest.json)
+          constant=$(sed -n 's/^VERSION: Final = "\(.*\)"$/\1/p' custom_components/bambu_printer_webhook/const.py)
+          if [ "$manifest" != "$version" ] || [ "$constant" != "$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME, manifest.json $manifest, const.py $constant: they must all match."
+            exit 1
+          fi
+      - name: Create the release
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
