@@ -73,7 +73,16 @@ def find_printers(hass: HomeAssistant) -> list[PrinterEntities]:
         if not serial:
             continue
 
-        device = device_registry.async_get_device(identifiers={(BAMBU_DOMAIN, serial)})
+        # Looked up among this config entry's own devices: identifiers are no
+        # longer unique across config entries.
+        device = next(
+            (
+                device
+                for device in dr.async_entries_for_config_entry(device_registry, entry.entry_id)
+                if (BAMBU_DOMAIN, serial) in device.identifiers
+            ),
+            None,
+        )
         printer = PrinterEntities(
             serial=serial,
             model=(device.model if device else None) or entry.data.get("device_type"),
