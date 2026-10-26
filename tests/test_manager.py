@@ -11,6 +11,7 @@ import pytest
 from aiohttp import FormData
 from homeassistant.components.image import Image
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
@@ -230,3 +231,28 @@ async def test_a_file_the_webhook_refused_is_sent_again_with_the_next_state(
         await _tick(hass, freezer, 300)
 
     assert post_file.await_count == 2
+
+
+async def test_its_entities_show_the_last_delivery_and_any_problem(
+    hass: HomeAssistant, bambu: BambuSetup, aioclient_mock: AiohttpClientMocker, freezer
+) -> None:
+    aioclient_mock.post(URL, json={"ok": True})
+    entry = await _set_up(hass)
+    registry = er.async_get(hass)
+    delivered = registry.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_last_delivered")
+    problem = registry.async_get_entity_id("binary_sensor", DOMAIN, f"{entry.entry_id}_delivery_problem")
+
+    assert hass.states.get(delivered).state == "unknown"
+    assert hass.states.get(problem).state == "unknown"
+
+    await _tick(hass, freezer, 31)
+
+    assert hass.states.get(delivered).state != "unknown"
+    assert hass.states.get(problem).state == "off"
+
+    aioclient_mock.clear_requests()
+    aioclient_mock.post(URL, status=401)
+    await _tick(hass, freezer, 300)
+
+    assert hass.states.get(problem).state == "on"
+    assert hass.states.get(problem).attributes["last_error"] == "HTTP 401"

@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 from homeassistant.core import HomeAssistant
 
+from custom_components.bambu_printer_webhook.const import VERSION
 from custom_components.bambu_printer_webhook.discovery import find_printers
 from custom_components.bambu_printer_webhook.state import build_state
 
@@ -47,7 +48,7 @@ async def test_builds_the_full_state_of_a_printing_printer(hass: HomeAssistant, 
     assert document == {
         "schema_version": 1,
         "sent_at": "2026-10-26T10:17:45+00:00",
-        "source": {"integration": "bambu_printer_webhook", "version": "0.1.0"},
+        "source": {"integration": "bambu_printer_webhook", "version": VERSION},
         "printer": {"serial": SERIAL, "model": MODEL, "name": f"{MODEL}_{SERIAL}"},
         "online": True,
         "status": "running",

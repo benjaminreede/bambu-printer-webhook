@@ -126,6 +126,21 @@ Any `2xx` counts as delivered. On anything else, or when the receiver is
 unreachable, the integration logs the failure and does not retry on its own:
 the next change or heartbeat sends the state again anyway.
 
+## Ping
+
+When the webhook is set up or changed in Home Assistant, the integration first
+sends a ping to check the address and token:
+
+```json
+{ "schema_version": 1, "ping": true }
+```
+
+A receiver authenticates it like any request and answers `2xx` without
+storing anything. The answer decides what Home Assistant shows: `401` or `403`
+means the token is refused, `404` or `405` that the address doesn't take
+printer states, anything else that is not `2xx` an unexpected answer. The
+webhook is only saved once the ping is answered with `2xx`.
+
 ## Print files
 
 While a print is `running` or `pause`, the integration also sends the print's

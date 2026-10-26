@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Bambu Printer Webhook",
-        "description": "Elke Bambu Lab-printer die via de Bambu Lab-integratie is ingesteld, stuurt zijn stand naar deze webhook.",
+        "description": "Elke Bambu Lab-printer die via de Bambu Lab-integratie is ingesteld, stuurt zijn stand naar deze webhook. Eerst gaat er een proefbericht om het adres en de sleutel te controleren.",
         "data": {
           "webhook_url": "Webhook-adres",
           "token": "Sleutel"
@@ -23,11 +23,32 @@
     },
     "error": {
       "invalid_url": "Vul een volledig http://- of https://-adres in.",
-      "invalid_token": "Vul een sleutel in."
+      "invalid_token": "Vul een sleutel in.",
+      "cannot_connect": "Dit adres is niet bereikbaar. Controleer het, en of Home Assistant het internet op kan.",
+      "invalid_auth": "De webhook weigert deze sleutel.",
+      "wrong_endpoint": "Dit adres neemt geen printerstand aan. Controleer het volledige pad, niet alleen het domein.",
+      "unexpected_response": "De webhook gaf een onverwacht antwoord op een proefbericht. Controleer het adres en de logs van de ontvanger."
     },
     "abort": {
       "already_configured": "Deze webhook is al ingesteld.",
       "reconfigure_successful": "De webhook is bijgewerkt."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "last_delivered": {
+        "name": "Laatst afgeleverd"
+      }
+    },
+    "binary_sensor": {
+      "delivery_problem": {
+        "name": "Aflevering",
+        "state_attributes": {
+          "last_error": {
+            "name": "Laatste fout"
+          }
+        }
+      }
     }
   }
 }

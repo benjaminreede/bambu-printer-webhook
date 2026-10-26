@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import aiohttp
 import voluptuous as vol
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     TextSelector,
     TextSelectorConfig,
@@ -13,7 +16,7 @@ from homeassistant.helpers.selector import (
 )
 from yarl import URL
 
-from .const import CONF_TOKEN, CONF_WEBHOOK_URL, DOMAIN, NAME
+from .const import CONF_TOKEN, CONF_WEBHOOK_URL, DOMAIN, NAME, REQUEST_TIMEOUT_SECONDS, SCHEMA_VERSION
 
 
 def _schema(defaults: dict[str, Any]) -> vol.Schema:
@@ -47,6 +50,37 @@ def _validate(user_input: dict[str, Any]) -> tuple[dict[str, str], dict[str, str
     return {CONF_WEBHOOK_URL: url, CONF_TOKEN: token}, errors
 
 
+async def _async_ping(hass: HomeAssistant, data: dict[str, str]) -> dict[str, str]:
+    """Send a ping (docs/schema-v1.md) and turn the answer into errors by field."""
+    session = async_get_clientsession(hass)
+    try:
+        async with session.post(
+            data[CONF_WEBHOOK_URL],
+            json={"schema_version": SCHEMA_VERSION, "ping": True},
+            headers={"Authorization": f"Bearer {data[CONF_TOKEN]}", "Accept": "application/json"},
+            timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS),
+        ) as response:
+            status = response.status
+    except (aiohttp.ClientError, TimeoutError):
+        return {"base": "cannot_connect"}
+
+    if status < 300:
+        return {}
+    if status in (401, 403):
+        return {CONF_TOKEN: "invalid_auth"}
+    if status in (404, 405):
+        return {CONF_WEBHOOK_URL: "wrong_endpoint"}
+    return {"base": "unexpected_response"}
+
+
+async def _async_check(hass: HomeAssistant, user_input: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
+    """The cleaned input, and any errors from checking it and then pinging the webhook."""
+    data, errors = _validate(user_input)
+    if not errors:
+        errors = await _async_ping(hass, data)
+    return data, errors
+
+
 class BambuPrinterWebhookConfigFlow(ConfigFlow, domain=DOMAIN):
     """Set up one webhook; every Bambu Lab printer is sent to it."""
 
@@ -55,7 +89,7 @@ class BambuPrinterWebhookConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            data, errors = _validate(user_input)
+            data, errors = await _async_check(self.hass, user_input)
             if not errors:
                 await self.async_set_unique_id(data[CONF_WEBHOOK_URL])
                 self._abort_if_unique_id_configured()
@@ -67,7 +101,7 @@ class BambuPrinterWebhookConfigFlow(ConfigFlow, domain=DOMAIN):
         entry = self._get_reconfigure_entry()
         errors: dict[str, str] = {}
         if user_input is not None:
-            data, errors = _validate(user_input)
+            data, errors = await _async_check(self.hass, user_input)
             if not errors:
                 return self.async_update_reload_and_abort(
                     entry,

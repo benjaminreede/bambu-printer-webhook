@@ -28,6 +28,19 @@ Each request is a `POST` with the token as a bearer token in the
 `Authorization` header. A failed request is logged and not retried: the next
 change or heartbeat sends the state again.
 
+## Entities
+
+The integration adds a device **Bambu Printer Webhook** with two diagnostic
+entities, so you can see in Home Assistant whether sending works (and automate
+on it):
+
+- **Last delivered**: when the webhook last accepted a state or file;
+- **Delivery**: a problem sensor, on when the last request failed, with the
+  reason (`HTTP 401`, a connection error) in its `last_error` attribute.
+
+They can't tell when Home Assistant itself is down: only the receiver can
+notice states stop arriving.
+
 ## Installation
 
 Through [HACS](https://hacs.xyz/):
@@ -49,7 +62,9 @@ enter:
   state;
 - **Token**: whatever your receiver expects as bearer token.
 
-Both can be changed later through **Reconfigure** on the integration. Adding the
+A test message is sent first, so a wrong address or token shows up right
+there instead of in the log. Both can be changed later through **Reconfigure**
+on the integration. Adding the
 integration more than once sends every printer to more than one webhook.
 
 ## Development

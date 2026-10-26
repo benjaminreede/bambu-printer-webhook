@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -46,12 +48,36 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class WebhookClient:
-    """Posts states (JSON) and files (multipart) to the configured webhook."""
+    """Posts states (JSON) and files (multipart) to the configured webhook.
+
+    Keeps how the last request went, for the integration's own entities.
+    """
 
     def __init__(self, hass: HomeAssistant, url: str, token: str) -> None:
         self._hass = hass
         self._url = url
         self._token = token
+        self._listeners: list[Callable[[], None]] = []
+        self.last_delivered: datetime | None = None
+        """When a request was last answered with 2xx."""
+        self.last_error: str | None = None
+        """Why the last request failed, or None when it was delivered."""
+        self.attempted = False
+
+    @callback
+    def async_add_listener(self, listener: Callable[[], None]) -> CALLBACK_TYPE:
+        """Call ``listener`` after every request; returns a callable that removes it."""
+        self._listeners.append(listener)
+        return lambda: self._listeners.remove(listener)
+
+    @callback
+    def _record(self, error: str | None) -> None:
+        self.attempted = True
+        self.last_error = error
+        if error is None:
+            self.last_delivered = dt_util.utcnow()
+        for listener in list(self._listeners):
+            listener()
 
     async def async_post_state(self, document: dict[str, Any]) -> bool:
         """Send a state; whether it was delivered."""
@@ -90,11 +116,14 @@ class WebhookClient:
                     _LOGGER.warning(
                         "Webhook answered %s to %s: %s", response.status, what, (await response.text())[:200]
                     )
+                    self._record(f"HTTP {response.status}")
                     return False
+                self._record(None)
                 return True
         except (aiohttp.ClientError, TimeoutError) as error:
             # No retry: the next change or heartbeat sends it again.
             _LOGGER.warning("Could not send %s: %s", what, error)
+            self._record(str(error) or type(error).__name__)
             return False
 
 
@@ -234,6 +263,11 @@ class WebhookManager:
         self._senders: dict[str, PrinterSender] = {}
         self._unsubscribers: list[CALLBACK_TYPE] = []
         self._rediscovery: CALLBACK_TYPE | None = None
+
+    @property
+    def client(self) -> WebhookClient:
+        """The client every printer's requests go through."""
+        return self._client
 
     @property
     def senders(self) -> dict[str, PrinterSender]:
