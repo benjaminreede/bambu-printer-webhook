@@ -1,8 +1,8 @@
 # Bambu Printer Webhook
 
 A Home Assistant integration that sends the state of your Bambu Lab printers to
-a webhook of your choice: print status and progress, and what is loaded in each
-AMS slot. Use it to keep a filament inventory, a print log or a dashboard of
+a webhook of your choice: print status and progress, what is loaded in each
+AMS slot, and each print's cover image and 3mf file. Use it to keep a filament inventory, a print log or a dashboard of
 your own up to date, without writing automations.
 
 It reads the entities of the [Bambu Lab integration](https://github.com/greghesp/ha-bambulab)
@@ -19,6 +19,10 @@ One JSON document per printer with its complete state, described in
   settled state goes out);
 - every 5 minutes regardless, as a heartbeat;
 - once, 30 seconds after Home Assistant starts.
+
+While a print runs, its cover image and 3mf file follow to the same URL as a
+multipart form, once per print. They come from the Bambu Lab integration's own
+cover image and file cache; this integration never connects to the printer.
 
 Each request is a `POST` with the token as a bearer token in the
 `Authorization` header. A failed request is logged and not retried: the next

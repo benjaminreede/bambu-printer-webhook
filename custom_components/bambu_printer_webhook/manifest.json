@@ -1,7 +1,7 @@
 {
   "domain": "bambu_printer_webhook",
   "name": "Bambu Printer Webhook",
-  "after_dependencies": ["bambu_lab"],
+  "after_dependencies": ["bambu_lab", "image"],
   "codeowners": ["@benjaminreede"],
   "config_flow": true,
   "documentation": "https://github.com/benjaminreede/bambu-printer-webhook",

@@ -4,7 +4,8 @@ Entity ids depend on the language Home Assistant runs in (a Dutch install has
 ``sensor.p1s_<serial>_printstatus``), so nothing here looks at them. Instead
 it relies on the unique ids ha-bambulab gives its entities:
 
-- printer entities: ``{serial}_{key}``, e.g. ``01P09C510500566_print_status``;
+- printer entities: ``{serial}_{key}``, e.g. ``01P09C510500566_print_status``,
+  and the image entity ``{serial}_cover_image``;
 - AMS entities: ``{model}_{serial}_AMS_{ams serial}_{key}``, with keys
   ``tray_1`` to ``tray_4``, ``humidity`` and ``humidity_index``; the AMS's
   number comes from its device, named ``{model}_{serial}_AMS_{n}`` (1-based,
@@ -21,7 +22,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
-from .const import BAMBU_DOMAIN, ONLINE_KEY, PRINTER_SENSOR_KEYS
+from .const import BAMBU_DOMAIN, COVER_IMAGE_KEY, ONLINE_KEY, PRINTER_SENSOR_KEYS
 
 _AMS_DEVICE_NAME = re.compile(r"_AMS_(\d+)$")
 _AMS_TRAY_KEY = re.compile(r"_AMS_.+_tray_(\d+)$")
@@ -46,6 +47,7 @@ class PrinterEntities:
     name: str | None
     sensors: dict[str, str] = field(default_factory=dict)
     online: str | None = None
+    cover_image: str | None = None
     ams: list[AmsEntities] = field(default_factory=list)
     external_spool: str | None = None
 
@@ -53,7 +55,7 @@ class PrinterEntities:
     def entity_ids(self) -> set[str]:
         """Every entity whose changes should trigger a new state."""
         ids = set(self.sensors.values())
-        ids.update(entity_id for entity_id in (self.online, self.external_spool) if entity_id)
+        ids.update(entity_id for entity_id in (self.online, self.cover_image, self.external_spool) if entity_id)
         for unit in self.ams:
             ids.update(unit.trays.values())
             ids.update(entity_id for entity_id in (unit.humidity, unit.humidity_index) if entity_id)
@@ -106,6 +108,10 @@ def _sort_entity(
 
     if entity.domain == "binary_sensor" and unique_id == f"{serial}_{ONLINE_KEY}":
         printer.online = entity.entity_id
+        return
+
+    if entity.domain == "image" and unique_id == f"{serial}_{COVER_IMAGE_KEY}":
+        printer.cover_image = entity.entity_id
         return
 
     if entity.domain == "sensor" and "_ExternalSpool" in unique_id and unique_id.endswith("_external_spool"):

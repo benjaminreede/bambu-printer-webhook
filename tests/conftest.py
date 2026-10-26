@@ -77,6 +77,9 @@ def bambu(hass: HomeAssistant) -> BambuSetup:
     }.items():
         setup.entity(key, "sensor", f"{SERIAL}_{key}", printer_device, f"p1s_{SERIAL.lower()}_{object_id}")
     setup.entity("online", "binary_sensor", f"{SERIAL}_online", printer_device, f"p1s_{SERIAL.lower()}_online")
+    setup.entity(
+        "cover_image", "image", f"{SERIAL}_cover_image", printer_device, f"p1s_{SERIAL.lower()}_cover_afbeelding"
+    )
 
     ams = setup.ams_device(1, "AMSSERIAL0001")
     for slot in range(1, 5):

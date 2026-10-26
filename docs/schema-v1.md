@@ -15,7 +15,8 @@ Accept: application/json
 ```
 
 One request per printer. A Home Assistant with two printers sends two
-requests.
+requests. The print's files follow as separate requests, see
+[Print files](#print-files).
 
 ## When it is sent
 
@@ -124,3 +125,40 @@ can arrive more than once.
 Any `2xx` counts as delivered. On anything else, or when the receiver is
 unreachable, the integration logs the failure and does not retry on its own:
 the next change or heartbeat sends the state again anyway.
+
+## Print files
+
+While a print is `running` or `pause`, the integration also sends the print's
+cover image and 3mf file to the same URL, each as its own request, right after
+a state that was delivered. A receiver therefore always has the state showing
+the print running before a file for it arrives. Each file is sent once per
+print; the cover again when it changes (a printer can correct it once the real
+task name arrives). A file the receiver refused, or that could not be
+delivered, goes out again after the next delivered state.
+
+```
+POST <webhook URL configured in Home Assistant>
+Authorization: Bearer <token configured in Home Assistant>
+Content-Type: multipart/form-data
+Accept: application/json
+```
+
+| Field | Meaning |
+|---|---|
+| `schema_version` | Always `1`. |
+| `kind` | `cover_image` or `model`. |
+| `printer_serial` | The printer's serial number, as `printer.serial` in the state. |
+| `task_name` | The print's task name, as `print.task_name`. |
+| `start_time` | The print's start time, exactly as `print.start_time`: match on it with some margin, since it can shift once while a print is being prepared. |
+| `file` | The file. A cover image is the plate's PNG preview (`cover.png`), or a JPEG from Bambu's cloud (`cover.jpg`). A 3mf keeps the name it has in the Bambu Lab integration's cache. |
+
+Both come from the Bambu Lab integration, which downloads the 3mf of every
+print from the printer to read it; this integration never connects to the
+printer itself. The cover is its cover image entity. The 3mf is the newest file
+in its cache named after the task and cached at most 10 minutes before the
+print started; when there is none (no local access to the printer, or a file
+whose name doesn't match the task) no 3mf is sent. Files over 100 MB are not
+sent.
+
+A receiver tells the two kinds of request apart by their content type: JSON
+is a state, a multipart form is a file.
