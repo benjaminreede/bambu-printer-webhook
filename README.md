@@ -14,7 +14,7 @@ picked up, including extra AMS units and printers added later.
 One JSON document per printer with its complete state, described in
 [docs/schema-v1.md](docs/schema-v1.md). It is sent:
 
-- after a change, once the printer's entities have been quiet for 20 seconds
+- after a change, once the printer's entities have been quiet for 30 seconds
   (inserting a spool produces a burst of intermediate readings; only the
   settled state goes out);
 - every 5 minutes regardless, as a heartbeat;

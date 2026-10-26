@@ -17,8 +17,12 @@ BAMBU_DOMAIN: Final = "bambu_lab"
 CONF_WEBHOOK_URL: Final = "webhook_url"
 CONF_TOKEN: Final = "token"
 
-SETTLE_DELAY: Final = timedelta(seconds=20)
-"""How long a printer's entities must be quiet before its state is sent."""
+SETTLE_DELAY: Final = timedelta(seconds=30)
+"""How long a printer's entities must be quiet before its state is sent.
+
+Inserting a spool was seen to leave up to 23 seconds between the new spool
+reported unmeasured and its real reading; 30 seconds clears that.
+"""
 
 HEARTBEAT_INTERVAL: Final = timedelta(minutes=5)
 """How often a printer's state is sent regardless of changes."""

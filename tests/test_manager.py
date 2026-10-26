@@ -60,17 +60,17 @@ async def test_a_burst_of_changes_is_sent_once_it_has_settled(
     webhook.mock_calls.clear()
     tray = bambu.entity_ids["ams_1_tray_3"]
 
-    # Inserting a spool: the previous spool, then the new one unmeasured,
-    # then its real reading, each within the settle time of the last.
+    # Inserting a spool, with the gaps seen on a real P1S: the previous
+    # spool, 5 s later the new one unmeasured, 23 s later its real reading.
     hass.states.async_set(tray, "Bambu PLA Matte", tray_attributes(tray_uuid="AAAA", remain=0))
     await hass.async_block_till_done()
     await _tick(hass, freezer, 5)
     hass.states.async_set(tray, "Bambu PLA Matte", tray_attributes(tray_uuid="BBBB", remain=-1))
     await hass.async_block_till_done()
-    await _tick(hass, freezer, 15)
+    await _tick(hass, freezer, 23)
     hass.states.async_set(tray, "Bambu PLA Matte", tray_attributes(tray_uuid="BBBB", remain=83))
     await hass.async_block_till_done()
-    await _tick(hass, freezer, 19)
+    await _tick(hass, freezer, 29)
 
     assert webhook.call_count == 0
 
