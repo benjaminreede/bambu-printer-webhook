@@ -62,11 +62,7 @@ pytest
 ## Releasing
 
 Set the new version in `custom_components/bambu_printer_webhook/manifest.json`
-and in `VERSION` in `const.py`, merge that into `main`, then push a tag for it:
-
-```
-git tag v0.2.0 && git push origin v0.2.0
-```
-
-The Release workflow checks that the tag matches both versions and publishes
-a GitHub release, which HACS offers as an update.
+and in `VERSION` in `const.py`, and merge that into `main`. The Release
+workflow then publishes a GitHub release for it (`v` plus the version), which
+HACS offers as an update. It can also be started by hand from the Actions tab,
+to release the current version when that hasn't happened yet.
