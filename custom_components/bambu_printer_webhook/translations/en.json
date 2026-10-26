@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Bambu Printer Webhook",
-        "description": "Every Bambu Lab printer set up through the Bambu Lab integration sends its state to this webhook.",
+        "description": "Every Bambu Lab printer set up through the Bambu Lab integration sends its state to this webhook. A test message is sent first to check the address and token.",
         "data": {
           "webhook_url": "Webhook URL",
           "token": "Token"
@@ -23,7 +23,11 @@
     },
     "error": {
       "invalid_url": "Enter a full http:// or https:// address.",
-      "invalid_token": "Enter a token."
+      "invalid_token": "Enter a token.",
+      "cannot_connect": "Could not reach this address. Check it, and that Home Assistant can reach the internet.",
+      "invalid_auth": "The webhook refused this token.",
+      "wrong_endpoint": "This address does not take printer states. Check the full path, not just the domain.",
+      "unexpected_response": "The webhook gave an unexpected answer to a test message. Check the address and the receiver's logs."
     },
     "abort": {
       "already_configured": "This webhook is already set up.",

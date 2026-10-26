@@ -49,7 +49,9 @@ enter:
   state;
 - **Token**: whatever your receiver expects as bearer token.
 
-Both can be changed later through **Reconfigure** on the integration. Adding the
+A test message is sent first, so a wrong address or token shows up right
+there instead of in the log. Both can be changed later through **Reconfigure**
+on the integration. Adding the
 integration more than once sends every printer to more than one webhook.
 
 ## Development
