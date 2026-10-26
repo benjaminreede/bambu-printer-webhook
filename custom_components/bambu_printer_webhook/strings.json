@@ -1,0 +1,33 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Bambu Printer Webhook",
+        "description": "Every Bambu Lab printer set up through the Bambu Lab integration sends its state to this webhook.",
+        "data": {
+          "webhook_url": "Webhook URL",
+          "token": "Token"
+        },
+        "data_description": {
+          "webhook_url": "Where the printer state is sent, as a POST with a JSON body.",
+          "token": "Sent along as a bearer token in the Authorization header."
+        }
+      },
+      "reconfigure": {
+        "title": "Bambu Printer Webhook",
+        "data": {
+          "webhook_url": "Webhook URL",
+          "token": "Token"
+        }
+      }
+    },
+    "error": {
+      "invalid_url": "Enter a full http:// or https:// address.",
+      "invalid_token": "Enter a token."
+    },
+    "abort": {
+      "already_configured": "This webhook is already set up.",
+      "reconfigure_successful": "The webhook has been updated."
+    }
+  }
+}
