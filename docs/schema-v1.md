@@ -57,7 +57,8 @@ can arrive more than once.
   "ams": [
     {
       "index": 1,
-      "humidity": 3,
+      "humidity": null,
+      "humidity_index": 2,
       "trays": [
         {
           "slot": 1,
@@ -91,8 +92,8 @@ can arrive more than once.
 | `printer.model` | string or null | e.g. `P1S`, `X1C`, `A1`. |
 | `printer.name` | string or null | The device name in Home Assistant, as the user sees it. |
 | `online` | boolean | Whether Home Assistant currently reaches the printer. When `false`, everything else is the last known state. |
-| `status` | string | The print status as the Bambu Lab integration reports it, lowercase: `idle`, `prepare`, `slicing`, `running`, `pause`, `finish`, `failed`, `offline` or `unknown`. |
-| `print` | object or null | The current or most recent print, `null` when the printer reports none. |
+| `status` | string | The print status as the Bambu Lab integration reports it, lowercase: `idle`, `init`, `prepare`, `slicing`, `running`, `pause`, `finish`, `failed`, `offline` or `unknown`. Anything else the integration does not know is sent as `unknown`. |
+| `print` | object or null | The current or most recent print, `null` when the printer reports no task name, progress or start time. |
 | `print.task_name` | string or null | The task name as the printer reports it. |
 | `print.progress_percent` | integer or null | 0 to 100. |
 | `print.current_layer` / `print.total_layers` | integer or null | |
@@ -100,20 +101,21 @@ can arrive more than once.
 | `print.end_time` | ISO 8601 or null | The printer's estimated (while running) or actual (once finished) end time. |
 | `print.weight_grams` | number or null | The print's total filament weight according to the slicer. |
 | `ams` | array | One entry per AMS unit, possibly empty. |
-| `ams[].index` | integer | 1 for the first AMS, 2 for the second, and so on. |
-| `ams[].humidity` | integer or null | The AMS humidity level as reported. |
+| `ams[].index` | integer | The AMS number as the printer gives it: 1 for the first AMS, 2 for the second, and so on; an AMS HT counts from 128. |
+| `ams[].humidity` | integer or null | Relative humidity in percent, on AMS units that measure it. |
+| `ams[].humidity_index` | integer or null | Humidity level from 1 (dry) to 5 (wet), as Bambu Handy and Studio show it. |
 | `ams[].trays` | array | Always every slot of that AMS (4 for an AMS, 1 for an AMS HT), including empty ones. |
 | `trays[].slot` | integer | 1 to 4 within its AMS. |
-| `trays[].empty` | boolean | `true` when the slot holds no spool; the spool fields are then left out. |
+| `trays[].empty` | boolean | `true` when the slot holds no spool, or when Home Assistant cannot currently read the slot; the spool fields are then left out. |
 | `trays[].active` | boolean | Whether the printer is feeding from this slot right now. |
-| `trays[].tray_uuid` | string or null | The spool's identity, the same from both of its RFID tags. `null` for a spool without a Bambu RFID tag. |
-| `trays[].tag_uid` | string or null | The RFID tag that was read. A spool has a tag on each side, so this can differ between two readings of the same spool. |
+| `trays[].tray_uuid` | string or null | The spool's identity, the same from both of its RFID tags. `null` for a spool without a Bambu RFID tag (the printer reports all zeros there). |
+| `trays[].tag_uid` | string or null | The RFID tag that was read. A spool has a tag on each side, so this can differ between two readings of the same spool. `null` without a Bambu RFID tag. |
 | `trays[].name` | string or null | Filament name, e.g. `Bambu PLA Matte`. |
 | `trays[].type` | string or null | Material, e.g. `PLA`. |
-| `trays[].color` | string or null | `#RRGGBBAA`. |
+| `trays[].color` | string or null | `#RRGGBBAA`, uppercase; a 6-digit colour is sent with `FF` added. |
 | `trays[].tray_weight` | integer or null | Full spool weight in grams. |
 | `trays[].remain` | integer | Remaining filament in percent, `-1` when the printer has not measured it (yet). |
-| `external_spool` | tray or null | The external spool holder, in the same shape as a tray (without `slot`), or `null` when the printer has none. |
+| `external_spool` | tray or null | The external spool holder, in the same shape as a tray (without `slot`), or `null` when the printer has none. A printer with two holders (one per nozzle) reports the first. |
 
 ## Response
 
