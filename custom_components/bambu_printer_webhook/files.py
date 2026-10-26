@@ -44,10 +44,14 @@ def cache_directories(config_path: Path, local_media: str | None, serial: str) -
     return directories
 
 
-def model_name(value: str) -> str:
-    """A print or file name reduced to what both have in common."""
-    name = _EXTENSION.sub("", Path(value).name)
-    return _SIZE_PREFIX.sub("", name).strip().casefold()
+def task_key(task_name: str) -> str:
+    """A task name reduced to what its cached file's name has in common with it."""
+    return _EXTENSION.sub("", task_name.strip()).strip().casefold()
+
+
+def file_key(filename: str) -> str:
+    """A cached file's name without the size ha-bambulab puts in front of it."""
+    return task_key(_SIZE_PREFIX.sub("", filename, count=1))
 
 
 def find_model_file(directories: list[Path], task_name: str, started: datetime) -> ModelFile | None:
@@ -57,7 +61,7 @@ def find_model_file(directories: list[Path], task_name: str, started: datetime) 
     to the newest 3mf on the printer when it finds none by name, which can
     belong to an earlier print. Blocking: run it in the executor.
     """
-    wanted = model_name(task_name)
+    wanted = task_key(task_name)
     not_before = started - MODEL_FRESHNESS
     newest: ModelFile | None = None
 
@@ -66,7 +70,7 @@ def find_model_file(directories: list[Path], task_name: str, started: datetime) 
         if not prints.is_dir():
             continue
         for path in prints.rglob("*.3mf"):
-            if model_name(path.name) != wanted:
+            if file_key(path.name) != wanted:
                 continue
             stat = path.stat()
             modified = datetime.fromtimestamp(stat.st_mtime, tz=started.tzinfo)
