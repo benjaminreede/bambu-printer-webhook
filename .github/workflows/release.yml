@@ -2,8 +2,12 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+    paths:
+      - custom_components/bambu_printer_webhook/manifest.json
+      - .github/workflows/release.yml
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -13,16 +17,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check the version matches the tag
+      - name: Read the version
+        id: version
         run: |
-          version="${GITHUB_REF_NAME#v}"
           manifest=$(jq -r .version custom_components/bambu_printer_webhook/manifest.json)
           constant=$(sed -n 's/^VERSION: Final = "\(.*\)"$/\1/p' custom_components/bambu_printer_webhook/const.py)
-          if [ "$manifest" != "$version" ] || [ "$constant" != "$version" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME, manifest.json $manifest, const.py $constant: they must all match."
+          if [ "$manifest" != "$constant" ]; then
+            echo "::error::manifest.json says $manifest, const.py says $constant: they must match."
             exit 1
           fi
-      - name: Create the release
-        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          echo "tag=v$manifest" >> "$GITHUB_OUTPUT"
+      - name: Create the release, unless it exists
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "$TAG is already released."
+          else
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --generate-notes
+          fi
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
