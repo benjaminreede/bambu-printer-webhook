@@ -16,7 +16,8 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR]
 
 async def async_setup_entry(hass: HomeAssistant, entry: BambuWebhookConfigEntry) -> bool:
     """Start sending printer states to the configured webhook."""
-    manager = WebhookManager(hass, entry.data[CONF_WEBHOOK_URL], entry.data[CONF_TOKEN])
+    manager = WebhookManager(hass, entry.data[CONF_WEBHOOK_URL], entry.data[CONF_TOKEN], entry.entry_id)
+    await manager.async_load()
     manager.async_start()
     entry.runtime_data = manager
     entry.async_on_unload(manager.async_stop)

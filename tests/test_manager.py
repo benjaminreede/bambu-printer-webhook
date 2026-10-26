@@ -256,3 +256,27 @@ async def test_its_entities_show_the_last_delivery_and_any_problem(
 
     assert hass.states.get(problem).state == "on"
     assert hass.states.get(problem).attributes["last_error"] == "HTTP 401"
+
+
+async def test_a_restart_does_not_send_the_same_files_again(
+    hass: HomeAssistant, bambu: BambuSetup, webhook: AiohttpClientMocker, freezer, cover, tmp_path
+) -> None:
+    hass.config.config_dir = str(tmp_path)
+    _set_print(hass, bambu, "running")
+    hass.states.async_set(bambu.entity_ids["cover_image"], "2026-10-26T08:18:00+00:00")
+    _cache_model(hass, "12958658-Christmas Moose.gcode.3mf", "2026-10-26T08:18:00+00:00")
+    entry = await _set_up(hass)
+    await _tick(hass, freezer, 31)
+    assert webhook.call_count == 3
+    await _tick(hass, freezer, 11)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    webhook.mock_calls.clear()
+
+    # ha-bambulab sets the same cover again, and touches the cached 3mf.
+    hass.states.async_set(bambu.entity_ids["cover_image"], "2026-10-26T09:00:00+00:00")
+    _cache_model(hass, "12958658-Christmas Moose.gcode.3mf", "2026-10-26T09:00:00+00:00")
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    await _tick(hass, freezer, 31)
+
+    assert webhook.call_count == 1, "only the state goes out again"

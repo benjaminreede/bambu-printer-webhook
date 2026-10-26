@@ -7,6 +7,7 @@ delivered, until each has been delivered once (again when it changes).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from collections.abc import Callable
 from datetime import datetime
@@ -25,10 +26,12 @@ from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
 )
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
     BAMBU_DOMAIN,
+    DOMAIN,
     FILE_COVER_IMAGE,
     FILE_MODEL,
     FILE_REQUEST_TIMEOUT_SECONDS,
@@ -127,18 +130,44 @@ class WebhookClient:
             return False
 
 
+class SentFiles:
+    """Which cover and 3mf were delivered for each printer's print, kept across restarts.
+
+    Without it every restart of Home Assistant would send the running
+    print's files again, a 3mf of tens of megabytes included.
+    """
+
+    SAVE_DELAY = 10
+
+    def __init__(self, hass: HomeAssistant, entry_id: str) -> None:
+        self._store: Store[dict[str, dict[str, list[Any]]]] = Store(hass, 1, f"{DOMAIN}.{entry_id}.sent_files")
+        self._sent: dict[str, dict[str, list[Any]]] = {}
+
+    async def async_load(self) -> None:
+        self._sent = await self._store.async_load() or {}
+
+    def get(self, serial: str, kind: str) -> list[Any] | None:
+        return self._sent.get(serial, {}).get(kind)
+
+    @callback
+    def set(self, serial: str, kind: str, key: list[Any]) -> None:
+        self._sent.setdefault(serial, {})[kind] = key
+        self._store.async_delay_save(lambda: self._sent, self.SAVE_DELAY)
+
+
 class PrinterSender:
     """Watches one printer and sends its state once it has settled."""
 
-    def __init__(self, hass: HomeAssistant, printer: PrinterEntities, client: WebhookClient) -> None:
+    def __init__(
+        self, hass: HomeAssistant, printer: PrinterEntities, client: WebhookClient, sent_files: SentFiles
+    ) -> None:
         self._hass = hass
         self.printer = printer
         self._client = client
+        self._sent_files = sent_files
         self._unsubscribers: list[CALLBACK_TYPE] = []
         self._pending: CALLBACK_TYPE | None = None
         self._lock = asyncio.Lock()
-        self._sent_cover: tuple[Any, ...] | None = None
-        self._sent_model: tuple[Any, ...] | None = None
 
     @callback
     def start(self, first_send_delay: float) -> None:
@@ -208,14 +237,15 @@ class PrinterSender:
         state = self._hass.states.get(entity_id) if entity_id else None
         if state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
             return
-        # The image entity's state is when its picture last changed.
-        sent = (print_["start_time"], state.state)
-        if sent == self._sent_cover:
-            return
         try:
             image = await async_get_image(self._hass, entity_id)
         except HomeAssistantError:
             _LOGGER.debug("No cover image for printer %s yet", self.printer.serial)
+            return
+        # Compared by content: ha-bambulab sets the same picture again after
+        # a restart, and that must not go out a second time.
+        sent = [print_["start_time"], hashlib.sha256(image.content).hexdigest()]
+        if sent == self._sent_files.get(self.printer.serial, FILE_COVER_IMAGE):
             return
         # ha-bambulab says JPEG, but the cover from a 3mf is a PNG.
         is_png = image.content.startswith(b"\x89PNG")
@@ -226,7 +256,7 @@ class PrinterSender:
             "image/png" if is_png else image.content_type,
             image.content,
         ):
-            self._sent_cover = sent
+            self._sent_files.set(self.printer.serial, FILE_COVER_IMAGE, sent)
 
     async def _async_send_model(self, print_: dict[str, Any]) -> None:
         if not print_["task_name"]:
@@ -240,26 +270,29 @@ class PrinterSender:
         model = await self._hass.async_add_executor_job(find_model_file, directories, print_["task_name"], started)
         if model is None:
             return
-        sent = (print_["start_time"], model.path, model.size, model.modified)
-        if sent == self._sent_model:
+        # Not by modification time: ha-bambulab touches a cached file when it
+        # reuses it, after a restart too.
+        sent = [print_["start_time"], model.path.name, model.size]
+        if sent == self._sent_files.get(self.printer.serial, FILE_MODEL):
             return
         if model.size > MAX_MODEL_BYTES:
             _LOGGER.warning("Not sending %s: larger than %s bytes", model.path.name, MAX_MODEL_BYTES)
-            self._sent_model = sent
+            self._sent_files.set(self.printer.serial, FILE_MODEL, sent)
             return
         content = await self._hass.async_add_executor_job(model.path.read_bytes)
         if await self._client.async_post_file(
             FILE_MODEL, self._file_fields(print_), model.path.name, "application/octet-stream", content
         ):
-            self._sent_model = sent
+            self._sent_files.set(self.printer.serial, FILE_MODEL, sent)
 
 
 class WebhookManager:
     """Finds every Bambu Lab printer and keeps a sender running for each."""
 
-    def __init__(self, hass: HomeAssistant, url: str, token: str) -> None:
+    def __init__(self, hass: HomeAssistant, url: str, token: str, entry_id: str) -> None:
         self._hass = hass
         self._client = WebhookClient(hass, url, token)
+        self._sent_files = SentFiles(hass, entry_id)
         self._senders: dict[str, PrinterSender] = {}
         self._unsubscribers: list[CALLBACK_TYPE] = []
         self._rediscovery: CALLBACK_TYPE | None = None
@@ -273,6 +306,10 @@ class WebhookManager:
     def senders(self) -> dict[str, PrinterSender]:
         """The running senders by printer serial."""
         return self._senders
+
+    async def async_load(self) -> None:
+        """Read back which files were already delivered before a restart."""
+        await self._sent_files.async_load()
 
     @callback
     def async_start(self) -> None:
@@ -330,7 +367,7 @@ class WebhookManager:
         for serial, printer in printers.items():
             if serial in self._senders:
                 continue
-            sender = PrinterSender(self._hass, printer, self._client)
+            sender = PrinterSender(self._hass, printer, self._client, self._sent_files)
             sender.start(first_send_delay)
             self._senders[serial] = sender
 
