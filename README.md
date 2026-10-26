@@ -58,3 +58,15 @@ integration more than once sends every printer to more than one webhook.
 pip install -r requirements_test.txt
 pytest
 ```
+
+## Releasing
+
+Set the new version in `custom_components/bambu_printer_webhook/manifest.json`
+and in `VERSION` in `const.py`, merge that into `main`, then push a tag for it:
+
+```
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+The Release workflow checks that the tag matches both versions and publishes
+a GitHub release, which HACS offers as an update.
