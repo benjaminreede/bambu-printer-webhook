@@ -1,0 +1,13 @@
+{
+  "domain": "bambu_printer_webhook",
+  "name": "Bambu Printer Webhook",
+  "after_dependencies": ["bambu_lab", "image"],
+  "codeowners": ["@benjaminreede"],
+  "config_flow": true,
+  "documentation": "https://github.com/benjaminreede/bambu-printer-webhook",
+  "integration_type": "service",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/benjaminreede/bambu-printer-webhook/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
