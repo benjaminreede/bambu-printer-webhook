@@ -6,7 +6,7 @@ whole document can be tested from a fixed set of states.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from datetime import datetime
 from typing import Any
 
@@ -19,12 +19,24 @@ from .discovery import AmsEntities, PrinterEntities
 
 StateGetter = Callable[[str], State | None]
 
+SettledTray = tuple[int, int, str]
+"""An AMS slot that finished reading a spool: (AMS index, slot, tray uuid)."""
+
 _MISSING = {None, "", STATE_UNKNOWN, STATE_UNAVAILABLE, "none"}
 _NO_RFID = {"0" * 32, "0" * 16}
 
 
-def build_state(printer: PrinterEntities, get_state: StateGetter, now: datetime) -> dict[str, Any]:
-    """The full state of one printer, as sent to the webhook."""
+def build_state(
+    printer: PrinterEntities,
+    get_state: StateGetter,
+    now: datetime,
+    settled: Collection[SettledTray] = (),
+) -> dict[str, Any]:
+    """The full state of one printer, as sent to the webhook.
+
+    ``settled`` holds the slots the AMS was seen reading a spool in, with
+    the spool it read; see PrinterSender.
+    """
     status = _status(printer, get_state)
 
     return {
@@ -34,8 +46,10 @@ def build_state(printer: PrinterEntities, get_state: StateGetter, now: datetime)
         "printer": {"serial": printer.serial, "model": printer.model, "name": printer.name},
         "online": _online(printer, get_state, status),
         "status": status,
+        "stage": _value(get_state, printer.sensors.get("stage")),
+        "print_error": _print_error(printer, get_state),
         "print": _print(printer, get_state),
-        "ams": [_ams(unit, get_state) for unit in printer.ams],
+        "ams": [_ams(unit, get_state, settled) for unit in printer.ams],
         "external_spool": _external_spool(printer, get_state),
     }
 
@@ -60,6 +74,13 @@ def _online(printer: PrinterEntities, get_state: StateGetter, status: str) -> bo
     return _value(get_state, printer.online) == STATE_ON
 
 
+def _print_error(printer: PrinterEntities, get_state: StateGetter) -> dict[str, Any] | None:
+    state = get_state(printer.print_error) if printer.print_error else None
+    if state is None or state.state != STATE_ON:
+        return None
+    return {"code": state.attributes.get("code") or None, "text": state.attributes.get("error") or None}
+
+
 def _print(printer: PrinterEntities, get_state: StateGetter) -> dict[str, Any] | None:
     def sensor(field: str) -> str | None:
         return _value(get_state, printer.sensors.get(field))
@@ -79,12 +100,17 @@ def _print(printer: PrinterEntities, get_state: StateGetter) -> dict[str, Any] |
     return document
 
 
-def _ams(unit: AmsEntities, get_state: StateGetter) -> dict[str, Any]:
+def _ams(unit: AmsEntities, get_state: StateGetter, settled: Collection[SettledTray]) -> dict[str, Any]:
+    trays = []
+    for slot, entity_id in sorted(unit.trays.items()):
+        tray = _tray(get_state(entity_id), slot=slot)
+        tray["settled"] = not tray["empty"] and (unit.index, slot, tray["tray_uuid"]) in settled
+        trays.append(tray)
     return {
         "index": unit.index,
         "humidity": _int(_value(get_state, unit.humidity)),
         "humidity_index": _int(_value(get_state, unit.humidity_index)),
-        "trays": [_tray(get_state(entity_id), slot=slot) for slot, entity_id in sorted(unit.trays.items())],
+        "trays": trays,
     }
 
 
@@ -94,7 +120,7 @@ def _external_spool(printer: PrinterEntities, get_state: StateGetter) -> dict[st
     state = get_state(printer.external_spool)
     if state is None or state.state == STATE_UNAVAILABLE:
         return None
-    return _tray(state, slot=None)
+    return {**_tray(state, slot=None), "settled": False}
 
 
 def _tray(state: State | None, slot: int | None) -> dict[str, Any]:

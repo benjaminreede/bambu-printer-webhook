@@ -74,9 +74,13 @@ def bambu(hass: HomeAssistant) -> BambuSetup:
         "start_time": "starttijd",
         "end_time": "eindtijd",
         "print_weight": "gewicht_van_print",
+        "stage": "huidige_fase",
     }.items():
         setup.entity(key, "sensor", f"{SERIAL}_{key}", printer_device, f"p1s_{SERIAL.lower()}_{object_id}")
     setup.entity("online", "binary_sensor", f"{SERIAL}_online", printer_device, f"p1s_{SERIAL.lower()}_online")
+    setup.entity(
+        "print_error", "binary_sensor", f"{SERIAL}_print_error", printer_device, f"p1s_{SERIAL.lower()}_printfout"
+    )
     setup.entity(
         "cover_image", "image", f"{SERIAL}_cover_image", printer_device, f"p1s_{SERIAL.lower()}_cover_afbeelding"
     )

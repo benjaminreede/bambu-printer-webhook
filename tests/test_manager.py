@@ -87,6 +87,78 @@ async def test_a_burst_of_changes_is_sent_once_it_has_settled(
     assert (sent_tray["tray_uuid"], sent_tray["remain"]) == ("BBBB", 83)
 
 
+async def test_a_spool_the_ams_finished_reading_goes_out_right_away_as_settled(
+    hass: HomeAssistant, bambu: BambuSetup, webhook: AiohttpClientMocker, freezer
+) -> None:
+    hass.states.async_set(bambu.entity_ids["print_status"], "idle")
+    await _set_up(hass)
+    await _tick(hass, freezer, 31)
+    webhook.mock_calls.clear()
+    tray = bambu.entity_ids["ams_1_tray_3"]
+
+    # The AMS reading a newly inserted spool: the slot goes active, still
+    # shows the previous spool, then the new one unmeasured, then measured,
+    # and lets go.
+    for attributes in (
+        tray_attributes(active=True, tray_uuid="AAAA", remain=0),
+        tray_attributes(active=True, tray_uuid="BBBB", remain=-1),
+        tray_attributes(active=True, tray_uuid="BBBB", remain=83),
+    ):
+        hass.states.async_set(tray, "Bambu PLA Matte", attributes)
+        await hass.async_block_till_done()
+        await _tick(hass, freezer, 5)
+    hass.states.async_set(tray, "Bambu PLA Matte", tray_attributes(tray_uuid="BBBB", remain=83))
+    await hass.async_block_till_done()
+    await _tick(hass, freezer, 2)
+
+    assert webhook.call_count == 0
+
+    await _tick(hass, freezer, 2)
+
+    assert webhook.call_count == 1
+    sent_tray = webhook.mock_calls[0][2]["ams"][0]["trays"][2]
+    assert (sent_tray["tray_uuid"], sent_tray["remain"], sent_tray["settled"]) == ("BBBB", 83, True)
+
+
+async def test_a_slot_letting_go_during_a_print_is_not_a_spool_read(
+    hass: HomeAssistant, bambu: BambuSetup, webhook: AiohttpClientMocker, freezer
+) -> None:
+    _set_print(hass, bambu, "running")
+    tray = bambu.entity_ids["ams_1_tray_3"]
+    hass.states.async_set(tray, "Bambu PLA Matte", tray_attributes(active=True, tray_uuid="BBBB"))
+    await _set_up(hass)
+    await _tick(hass, freezer, 31)
+    webhook.mock_calls.clear()
+
+    hass.states.async_set(tray, "Bambu PLA Matte", tray_attributes(tray_uuid="BBBB"))
+    await hass.async_block_till_done()
+    await _tick(hass, freezer, 4)
+
+    assert webhook.call_count == 0
+
+    await _tick(hass, freezer, 27)
+
+    assert webhook.call_count == 1
+    assert webhook.mock_calls[0][2]["ams"][0]["trays"][2]["settled"] is False
+
+
+async def test_a_spool_running_out_goes_out_soon(
+    hass: HomeAssistant, bambu: BambuSetup, webhook: AiohttpClientMocker, freezer
+) -> None:
+    _set_print(hass, bambu, "running")
+    hass.states.async_set(bambu.entity_ids["stage"], "printing")
+    await _set_up(hass)
+    await _tick(hass, freezer, 31)
+    webhook.mock_calls.clear()
+
+    hass.states.async_set(bambu.entity_ids["stage"], "paused_filament_runout")
+    await hass.async_block_till_done()
+    await _tick(hass, freezer, 31)
+
+    assert webhook.call_count == 1
+    assert webhook.mock_calls[0][2]["stage"] == "paused_filament_runout"
+
+
 async def test_sends_a_heartbeat_without_changes(
     hass: HomeAssistant, bambu: BambuSetup, webhook: AiohttpClientMocker, freezer
 ) -> None:

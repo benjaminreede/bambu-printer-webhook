@@ -7,7 +7,7 @@ from typing import Final
 
 DOMAIN: Final = "bambu_printer_webhook"
 NAME: Final = "Bambu Printer Webhook"
-VERSION: Final = "0.3.0"
+VERSION: Final = "0.4.0"
 
 SCHEMA_VERSION: Final = 1
 
@@ -23,6 +23,18 @@ SETTLE_DELAY: Final = timedelta(seconds=30)
 Inserting a spool was seen to leave up to 23 seconds between the new spool
 reported unmeasured and its real reading; 30 seconds clears that.
 """
+
+SETTLED_SEND_DELAY: Final = timedelta(seconds=3)
+"""How soon a state goes out once an AMS has finished reading a new spool.
+
+The AMS reads a spool's RFID tag with the slot active and lets go once it
+has both the tag and the remaining percentage, so that moment needs no
+quiet period of its own.
+"""
+
+NOT_READING_STATUSES: Final = frozenset({"prepare", "slicing", "running", "pause"})
+"""Statuses in which a slot being active means it feeds the print, not that
+the AMS is reading a spool: the AMS reads no tags while a print is underway."""
 
 CONF_INTERVAL: Final = "interval"
 DEFAULT_INTERVAL_SECONDS: Final = 300
@@ -64,10 +76,17 @@ PRINTER_SENSOR_KEYS: Final = {
     "start_time": "start_time",
     "end_time": "end_time",
     "weight_grams": "print_weight",
+    "stage": "stage",
 }
 """Schema field to ha-bambulab entity key, found by unique id ``{serial}_{key}``."""
 
 ONLINE_KEY: Final = "online"
+
+PRINT_ERROR_KEY: Final = "print_error"
+"""The binary sensor that is on while the printer reports a print error, with
+its ``code`` (``0700_8011``) and ``error`` text as attributes."""
+
+RUNOUT_STAGE: Final = "paused_filament_runout"
 
 COVER_IMAGE_KEY: Final = "cover_image"
 """The image entity with the current print's cover, unique id ``{serial}_cover_image``."""
