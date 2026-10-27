@@ -91,6 +91,7 @@ async def test_a_spool_the_ams_finished_reading_goes_out_right_away_as_settled(
     hass: HomeAssistant, bambu: BambuSetup, webhook: AiohttpClientMocker, freezer
 ) -> None:
     hass.states.async_set(bambu.entity_ids["print_status"], "idle")
+    hass.states.async_set(bambu.entity_ids["online"], "on")
     await _set_up(hass)
     await _tick(hass, freezer, 31)
     webhook.mock_calls.clear()
@@ -118,6 +119,69 @@ async def test_a_spool_the_ams_finished_reading_goes_out_right_away_as_settled(
     assert webhook.call_count == 1
     sent_tray = webhook.mock_calls[0][2]["ams"][0]["trays"][2]
     assert (sent_tray["tray_uuid"], sent_tray["remain"], sent_tray["settled"]) == ("BBBB", 83, True)
+
+
+async def test_a_spool_read_in_a_slot_that_still_showed_empty_goes_out_right_away(
+    hass: HomeAssistant, bambu: BambuSetup, webhook: AiohttpClientMocker, freezer
+) -> None:
+    # As seen on a P1S: the slot goes active while still empty, the spool
+    # appears once its tag is read, and here it lets go in that same update.
+    hass.states.async_set(bambu.entity_ids["print_status"], "idle")
+    hass.states.async_set(bambu.entity_ids["online"], "on")
+    tray = bambu.entity_ids["ams_1_tray_4"]
+    hass.states.async_set(tray, "Leeg", {"empty": True, "active": False})
+    await _set_up(hass)
+    await _tick(hass, freezer, 31)
+    webhook.mock_calls.clear()
+
+    hass.states.async_set(tray, "Leeg", {"empty": True, "active": True})
+    await hass.async_block_till_done()
+    await _tick(hass, freezer, 12)
+    hass.states.async_set(tray, "Bambu PLA Matte", tray_attributes(tray_uuid="CCCC", remain=69))
+    await hass.async_block_till_done()
+    await _tick(hass, freezer, 4)
+
+    assert webhook.call_count == 1
+    sent_tray = webhook.mock_calls[0][2]["ams"][0]["trays"][3]
+    assert (sent_tray["tray_uuid"], sent_tray["settled"]) == ("CCCC", True)
+
+
+async def test_a_spool_taken_out_goes_out_right_away(
+    hass: HomeAssistant, bambu: BambuSetup, webhook: AiohttpClientMocker, freezer
+) -> None:
+    hass.states.async_set(bambu.entity_ids["print_status"], "finish")
+    hass.states.async_set(bambu.entity_ids["online"], "on")
+    tray = bambu.entity_ids["ams_1_tray_4"]
+    hass.states.async_set(tray, "Bambu PLA Matte", tray_attributes(tray_uuid="BBBB"))
+    await _set_up(hass)
+    await _tick(hass, freezer, 31)
+    webhook.mock_calls.clear()
+
+    hass.states.async_set(tray, "Leeg", {"empty": True, "active": False})
+    await hass.async_block_till_done()
+    await _tick(hass, freezer, 4)
+
+    assert webhook.call_count == 1
+    assert webhook.mock_calls[0][2]["ams"][0]["trays"][3]["empty"] is True
+
+
+async def test_slots_going_unavailable_with_the_printer_do_not_go_out_right_away(
+    hass: HomeAssistant, bambu: BambuSetup, webhook: AiohttpClientMocker, freezer
+) -> None:
+    hass.states.async_set(bambu.entity_ids["print_status"], "idle")
+    hass.states.async_set(bambu.entity_ids["online"], "on")
+    tray = bambu.entity_ids["ams_1_tray_4"]
+    hass.states.async_set(tray, "Bambu PLA Matte", tray_attributes(tray_uuid="BBBB"))
+    await _set_up(hass)
+    await _tick(hass, freezer, 31)
+    webhook.mock_calls.clear()
+
+    hass.states.async_set(bambu.entity_ids["online"], "off")
+    hass.states.async_set(tray, "unavailable")
+    await hass.async_block_till_done()
+    await _tick(hass, freezer, 4)
+
+    assert webhook.call_count == 0
 
 
 async def test_a_slot_letting_go_during_a_print_is_not_a_spool_read(

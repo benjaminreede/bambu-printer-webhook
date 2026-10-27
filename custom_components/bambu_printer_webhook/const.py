@@ -7,7 +7,7 @@ from typing import Final
 
 DOMAIN: Final = "bambu_printer_webhook"
 NAME: Final = "Bambu Printer Webhook"
-VERSION: Final = "0.4.0"
+VERSION: Final = "0.4.1"
 
 SCHEMA_VERSION: Final = 1
 
@@ -25,11 +25,12 @@ reported unmeasured and its real reading; 30 seconds clears that.
 """
 
 SETTLED_SEND_DELAY: Final = timedelta(seconds=3)
-"""How soon a state goes out once an AMS has finished reading a new spool.
+"""How soon a state goes out once an AMS has finished reading a spool, or a
+slot was emptied.
 
 The AMS reads a spool's RFID tag with the slot active and lets go once it
-has both the tag and the remaining percentage, so that moment needs no
-quiet period of its own.
+has both the tag and the remaining percentage, and taking a spool out
+empties its slot in one go, so neither needs a quiet period of its own.
 """
 
 NOT_READING_STATUSES: Final = frozenset({"prepare", "slicing", "running", "pause"})
