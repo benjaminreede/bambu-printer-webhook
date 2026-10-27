@@ -14,10 +14,13 @@ picked up, including extra AMS units and printers added later.
 One JSON document per printer with its complete state, described in
 [docs/schema-v1.md](docs/schema-v1.md). It is sent:
 
-- after a change, once the printer's entities have been quiet for 30 seconds
-  (inserting a spool produces a burst of intermediate readings; only the
-  settled state goes out);
-- every 5 minutes regardless, as a heartbeat;
+- after a significant change (the printer's status, going on- or offline, a
+  new print, a spool inserted or taken out), once the printer's entities have
+  been quiet for 30 seconds (inserting a spool produces a burst of
+  intermediate readings; only the settled state goes out);
+- every 5 minutes regardless, with whatever else changed (progress, layers,
+  a spool's percentage). The interval can be changed through **Configure** on
+  the integration, from 60 to 3600 seconds;
 - once, 30 seconds after Home Assistant starts.
 
 While a print runs, its cover image and 3mf file follow to the same URL as a

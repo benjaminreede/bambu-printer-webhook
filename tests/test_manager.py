@@ -280,3 +280,45 @@ async def test_a_restart_does_not_send_the_same_files_again(
     await _tick(hass, freezer, 31)
 
     assert webhook.call_count == 1, "only the state goes out again"
+
+
+async def test_progress_waits_for_the_interval_but_a_status_change_goes_out_soon(
+    hass: HomeAssistant, bambu: BambuSetup, webhook: AiohttpClientMocker, freezer
+) -> None:
+    _set_print(hass, bambu, "running")
+    hass.states.async_set(bambu.entity_ids["print_progress"], "10")
+    await _set_up(hass)
+    await _tick(hass, freezer, 31)
+    webhook.mock_calls.clear()
+
+    for progress in ("11", "12", "13"):
+        hass.states.async_set(bambu.entity_ids["print_progress"], progress)
+        await hass.async_block_till_done()
+        await _tick(hass, freezer, 60)
+
+    assert webhook.call_count == 0, "a new layer or percentage waits for the interval"
+
+    hass.states.async_set(bambu.entity_ids["print_status"], "finish")
+    await hass.async_block_till_done()
+    await _tick(hass, freezer, 31)
+
+    assert webhook.call_count == 1
+    assert webhook.mock_calls[0][2]["status"] == "finish"
+
+
+async def test_the_interval_can_be_changed_in_the_options(
+    hass: HomeAssistant, bambu: BambuSetup, webhook: AiohttpClientMocker, freezer
+) -> None:
+    entry = await _set_up(hass)
+    await _tick(hass, freezer, 31)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"interval": 120})
+    await hass.async_block_till_done()
+    assert entry.options == {"interval": 120}
+    await _tick(hass, freezer, 31)
+    webhook.mock_calls.clear()
+
+    await _tick(hass, freezer, 121)
+
+    assert webhook.call_count == 1

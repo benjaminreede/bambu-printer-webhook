@@ -50,5 +50,19 @@
         }
       }
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Bambu Printer Webhook",
+        "description": "A change in a printer's status, its print or the spools it holds is sent within half a minute. Everything else (progress, layers, a spool's percentage) is sent with the interval.",
+        "data": {
+          "interval": "Interval"
+        },
+        "data_description": {
+          "interval": "How often the state is sent regardless of changes, in seconds."
+        }
+      }
+    }
   }
 }

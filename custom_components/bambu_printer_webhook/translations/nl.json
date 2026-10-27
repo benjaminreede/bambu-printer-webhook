@@ -50,5 +50,19 @@
         }
       }
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Bambu Printer Webhook",
+        "description": "Een wijziging in de status van een printer, zijn print of de spoelen die erin zitten, gaat binnen een halve minuut weg. De rest (voortgang, lagen, het percentage van een spoel) gaat mee met het interval.",
+        "data": {
+          "interval": "Interval"
+        },
+        "data_description": {
+          "interval": "Hoe vaak de stand hoe dan ook verstuurd wordt, in seconden."
+        }
+      }
+    }
   }
 }

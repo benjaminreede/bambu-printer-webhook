@@ -10,7 +10,7 @@ import asyncio
 import hashlib
 import logging
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -36,7 +36,6 @@ from .const import (
     FILE_MODEL,
     FILE_REQUEST_TIMEOUT_SECONDS,
     FILE_STATUSES,
-    HEARTBEAT_INTERVAL,
     MAX_MODEL_BYTES,
     REDISCOVERY_DELAY,
     REQUEST_TIMEOUT_SECONDS,
@@ -159,15 +158,22 @@ class PrinterSender:
     """Watches one printer and sends its state once it has settled."""
 
     def __init__(
-        self, hass: HomeAssistant, printer: PrinterEntities, client: WebhookClient, sent_files: SentFiles
+        self,
+        hass: HomeAssistant,
+        printer: PrinterEntities,
+        client: WebhookClient,
+        sent_files: SentFiles,
+        interval: timedelta,
     ) -> None:
         self._hass = hass
         self.printer = printer
         self._client = client
         self._sent_files = sent_files
+        self._interval = interval
         self._unsubscribers: list[CALLBACK_TYPE] = []
         self._pending: CALLBACK_TYPE | None = None
         self._lock = asyncio.Lock()
+        self._sent_significant: tuple[Any, ...] | None = None
 
     @callback
     def start(self, first_send_delay: float) -> None:
@@ -175,7 +181,7 @@ class PrinterSender:
         self._unsubscribers.append(
             async_track_state_change_event(self._hass, sorted(self.printer.entity_ids), self._on_change)
         )
-        self._unsubscribers.append(async_track_time_interval(self._hass, self._on_heartbeat, HEARTBEAT_INTERVAL))
+        self._unsubscribers.append(async_track_time_interval(self._hass, self._on_heartbeat, self._interval))
         self._schedule(first_send_delay)
 
     @callback
@@ -187,9 +193,31 @@ class PrinterSender:
 
     @callback
     def _on_change(self, _event: Event) -> None:
-        # Every change restarts the wait, so a burst of intermediate states
-        # (a spool being inserted) only goes out once it has ended.
-        self._schedule(SETTLE_DELAY.total_seconds())
+        # A significant change is sent once the printer has been quiet for a
+        # while; while that wait runs, every change restarts it, so a burst
+        # of intermediate states (a spool being inserted) only goes out once
+        # it has ended. Anything else (progress, layers, a spool's
+        # percentage) waits for the interval.
+        if self._pending is not None or self._significant() != self._sent_significant:
+            self._schedule(SETTLE_DELAY.total_seconds())
+
+    def _significant(self, document: dict[str, Any] | None = None) -> tuple[Any, ...]:
+        """What in a state is worth sending right away: the printer's status,
+        which print it runs, and which spool each slot holds."""
+        document = document or build_state(self.printer, self._hass.states.get, dt_util.utcnow())
+        print_ = document["print"] or {}
+        trays = [tray for unit in document["ams"] for tray in unit["trays"]]
+        if document["external_spool"]:
+            trays.append(document["external_spool"])
+        cover = self._hass.states.get(self.printer.cover_image) if self.printer.cover_image else None
+        return (
+            document["online"],
+            document["status"],
+            print_.get("task_name"),
+            print_.get("start_time"),
+            tuple((tray.get("empty"), tray.get("active"), tray.get("tray_uuid")) for tray in trays),
+            cover.state if cover else None,
+        )
 
     @callback
     def _on_heartbeat(self, _now: Any) -> None:
@@ -218,6 +246,7 @@ class PrinterSender:
             document = build_state(self.printer, self._hass.states.get, dt_util.utcnow())
             if not await self._client.async_post_state(document):
                 return
+            self._sent_significant = self._significant(document)
             # Only after a delivered state showing the print running, so the
             # receiver knows the print the files belong to.
             print_ = document["print"]
@@ -289,8 +318,9 @@ class PrinterSender:
 class WebhookManager:
     """Finds every Bambu Lab printer and keeps a sender running for each."""
 
-    def __init__(self, hass: HomeAssistant, url: str, token: str, entry_id: str) -> None:
+    def __init__(self, hass: HomeAssistant, url: str, token: str, entry_id: str, interval: timedelta) -> None:
         self._hass = hass
+        self._interval = interval
         self._client = WebhookClient(hass, url, token)
         self._sent_files = SentFiles(hass, entry_id)
         self._senders: dict[str, PrinterSender] = {}
@@ -367,7 +397,7 @@ class WebhookManager:
         for serial, printer in printers.items():
             if serial in self._senders:
                 continue
-            sender = PrinterSender(self._hass, printer, self._client, self._sent_files)
+            sender = PrinterSender(self._hass, printer, self._client, self._sent_files, self._interval)
             sender.start(first_send_delay)
             self._senders[serial] = sender
 
