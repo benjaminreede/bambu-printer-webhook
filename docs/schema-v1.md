@@ -29,10 +29,13 @@ requests. The print's files follow as separate requests, see
   burst to end means only the settled state is sent. A receiver should
   still not trust a spool's percentage in the first state it shows up in a
   slot, unless that slot is `settled` (below).
-- After **3 seconds** when an AMS has finished reading a spool. While no
-  print is underway, the AMS makes a slot active to read a newly inserted
-  spool's RFID tag, and lets go once it has read the tag and the remaining
-  percentage; that slot is then sent with `settled: true`. The AMS reads no
+- After **3 seconds** when an AMS has finished reading a spool, or a spool
+  was taken out. While no print is underway, the AMS makes a slot active to
+  read a newly inserted spool's RFID tag (the slot can still show empty
+  then), and lets go once it has read the tag and the remaining percentage;
+  that slot is then sent with `settled: true`. Taking a spool out empties
+  its slot at once. Slots that read empty because the printer went offline
+  wait for the 30 seconds. The AMS reads no
   tags during a print: a spool inserted then stays unread (all zeros) until
   the AMS reads it later.
 - After a spool runs out (stage `paused_filament_runout`) or a print error

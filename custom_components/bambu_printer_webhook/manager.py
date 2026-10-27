@@ -163,8 +163,9 @@ class PrinterSender:
     It also follows each AMS slot reading a spool: while no print is
     underway, the AMS makes a slot active to read a newly inserted spool's
     RFID tag and lets go once it has read both the tag and the remaining
-    percentage. Such a slot is reported ``settled`` for that spool, and the
-    state goes out right away instead of after the quiet period.
+    percentage. Such a slot is reported ``settled`` for that spool. That
+    moment, and a slot being emptied, go out right away instead of after
+    the quiet period: neither is followed by intermediate states.
     """
 
     def __init__(
@@ -185,8 +186,9 @@ class PrinterSender:
         self._lock = asyncio.Lock()
         self._sent_significant: tuple[Any, ...] | None = None
         self._reading: set[tuple[int, int]] = set()
+        self._empty: dict[tuple[int, int], bool] = {}
         self._settled: set[SettledTray] = set()
-        self._sending_settled = False
+        self._sending_soon = False
 
     @callback
     def start(self, first_send_delay: float) -> None:
@@ -195,6 +197,8 @@ class PrinterSender:
             async_track_state_change_event(self._hass, sorted(self.printer.entity_ids), self._on_change)
         )
         self._unsubscribers.append(async_track_time_interval(self._hass, self._on_heartbeat, self._interval))
+        # What each slot holds now, so the first change can be compared.
+        self._follow_trays(self._build_state())
         self._schedule(first_send_delay)
 
     @callback
@@ -207,10 +211,10 @@ class PrinterSender:
     @callback
     def _on_change(self, _event: Event) -> None:
         document = self._build_state()
-        if self._follow_reading(document):
+        if self._follow_trays(document):
             self._schedule(SETTLED_SEND_DELAY.total_seconds())
-            self._sending_settled = True
-        elif self._sending_settled:
+            self._sending_soon = True
+        elif self._sending_soon:
             return
         # A significant change is sent once the printer has been quiet for a
         # while; while that wait runs, every change restarts it, so a burst
@@ -223,32 +227,42 @@ class PrinterSender:
     def _build_state(self) -> dict[str, Any]:
         return build_state(self.printer, self._hass.states.get, dt_util.utcnow(), self._settled)
 
-    def _follow_reading(self, document: dict[str, Any]) -> bool:
-        """Note which slots the AMS reads a spool in; whether one just finished."""
+    def _follow_trays(self, document: dict[str, Any]) -> bool:
+        """Note which slots the AMS reads a spool in; whether a slot just
+        finished reading or was emptied, which goes out right away."""
         reading_possible = document["status"] not in NOT_READING_STATUSES
-        finished = False
+        send_soon = False
 
         for unit in document["ams"]:
             for tray in unit["trays"]:
                 slot = (unit["index"], tray["slot"])
+                was_empty = self._empty.get(slot)
+                self._empty[slot] = tray["empty"]
                 # A slot's spool changed: whatever it read before is stale.
                 self._settled = {
                     settled for settled in self._settled if settled[:2] != slot or settled[2] == tray.get("tray_uuid")
                 }
-                if tray["empty"]:
-                    self._reading.discard(slot)
-                elif tray["active"]:
+
+                if tray["active"]:
+                    # Reading starts while the slot still shows empty: the
+                    # spool only appears once its tag has been read.
                     if reading_possible:
                         self._reading.add(slot)
-                elif slot in self._reading and tray["tray_uuid"] is None:
-                    # A spool without an RFID tag: nothing to read.
+                elif slot in self._reading:
+                    if not tray["empty"] and tray["tray_uuid"] is not None and tray["remain"] == -1:
+                        # Let go before the percentage came in: that
+                        # reading still finishes this one.
+                        continue
                     self._reading.discard(slot)
-                elif slot in self._reading and tray["remain"] != -1:
-                    self._reading.discard(slot)
-                    self._settled.add((*slot, tray["tray_uuid"]))
-                    finished = True
+                    if not tray["empty"] and tray["tray_uuid"] is not None:
+                        self._settled.add((*slot, tray["tray_uuid"]))
+                    send_soon = True
+                elif tray["empty"] and was_empty is False:
+                    # Taken out: no reading follows, the slot is just empty.
+                    send_soon = True
 
-        return finished
+        # Offline, every slot reads empty because its entity is unavailable.
+        return send_soon and document["online"]
 
     def _significant(self, document: dict[str, Any]) -> tuple[Any, ...]:
         """What in a state is worth sending right away: the printer's status,
@@ -283,7 +297,7 @@ class PrinterSender:
     @callback
     def _on_settled(self, _now: Any) -> None:
         self._pending = None
-        self._sending_settled = False
+        self._sending_soon = False
         self._hass.async_create_task(self.async_send_now())
 
     @callback
@@ -291,7 +305,7 @@ class PrinterSender:
         if self._pending is not None:
             self._pending()
             self._pending = None
-        self._sending_settled = False
+        self._sending_soon = False
 
     async def async_send_now(self) -> None:
         """Build the printer's current state and send it, then the print's files."""
