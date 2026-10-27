@@ -27,6 +27,8 @@ def _set_printing(bambu: BambuSetup) -> None:
     states.async_set(ids["end_time"], "2026-10-26T12:02:00+00:00")
     states.async_set(ids["print_weight"], "38.0")
     states.async_set(ids["online"], "on")
+    states.async_set(ids["stage"], "printing")
+    states.async_set(ids["print_error"], "off")
     states.async_set(ids["ams_1_tray_1"], "Bambu PLA Matte", tray_attributes(active=True))
     states.async_set(ids["ams_1_tray_2"], "Leeg", {"empty": True, "active": False, "tray_uuid": "0" * 32})
     states.async_set(
@@ -52,6 +54,8 @@ async def test_builds_the_full_state_of_a_printing_printer(hass: HomeAssistant, 
         "printer": {"serial": SERIAL, "model": MODEL, "name": f"{MODEL}_{SERIAL}"},
         "online": True,
         "status": "running",
+        "stage": "printing",
+        "print_error": None,
         "print": {
             "task_name": "Christmas Moose Tea Light",
             "progress_percent": 49,
@@ -78,8 +82,9 @@ async def test_builds_the_full_state_of_a_printing_printer(hass: HomeAssistant, 
                         "color": "#7D6556FF",
                         "tray_weight": 1000,
                         "remain": 79,
+                        "settled": False,
                     },
-                    {"slot": 2, "empty": True, "active": False},
+                    {"slot": 2, "empty": True, "active": False, "settled": False},
                     {
                         "slot": 3,
                         "empty": False,
@@ -91,12 +96,13 @@ async def test_builds_the_full_state_of_a_printing_printer(hass: HomeAssistant, 
                         "color": "#FFFFFFFF",
                         "tray_weight": 1000,
                         "remain": -1,
+                        "settled": False,
                     },
-                    {"slot": 4, "empty": True, "active": False},
+                    {"slot": 4, "empty": True, "active": False, "settled": False},
                 ],
             }
         ],
-        "external_spool": {"empty": True, "active": False},
+        "external_spool": {"empty": True, "active": False, "settled": False},
     }
 
 
@@ -130,3 +136,31 @@ async def test_an_unexpected_status_is_reported_as_unknown(hass: HomeAssistant, 
     (printer,) = find_printers(hass)
 
     assert build_state(printer, hass.states.get, NOW)["status"] == "unknown"
+
+
+async def test_a_slot_is_settled_only_for_the_spool_the_ams_read(hass: HomeAssistant, bambu: BambuSetup) -> None:
+    _set_printing(bambu)
+
+    (printer,) = find_printers(hass)
+    document = build_state(printer, hass.states.get, NOW, {(1, 1, "02976CE8418148D988489D5D82B1467C"), (1, 2, "AAAA")})
+
+    assert [tray["settled"] for tray in document["ams"][0]["trays"]] == [True, False, False, False]
+
+
+async def test_a_print_error_is_reported_with_its_code_and_text(hass: HomeAssistant, bambu: BambuSetup) -> None:
+    _set_printing(bambu)
+    hass.states.async_set(bambu.entity_ids["stage"], "paused_filament_runout")
+    hass.states.async_set(
+        bambu.entity_ids["print_error"],
+        "on",
+        {"code": "0700_8011", "error": "AMS filament ran out. Please insert a new filament into the AMS."},
+    )
+
+    (printer,) = find_printers(hass)
+    document = build_state(printer, hass.states.get, NOW)
+
+    assert document["stage"] == "paused_filament_runout"
+    assert document["print_error"] == {
+        "code": "0700_8011",
+        "text": "AMS filament ran out. Please insert a new filament into the AMS.",
+    }

@@ -37,14 +37,17 @@ from .const import (
     FILE_REQUEST_TIMEOUT_SECONDS,
     FILE_STATUSES,
     MAX_MODEL_BYTES,
+    NOT_READING_STATUSES,
     REDISCOVERY_DELAY,
     REQUEST_TIMEOUT_SECONDS,
+    RUNOUT_STAGE,
     SETTLE_DELAY,
+    SETTLED_SEND_DELAY,
     STARTUP_DELAY,
 )
 from .discovery import PrinterEntities, find_printers
 from .files import cache_directories, find_model_file
-from .state import build_state
+from .state import SettledTray, build_state
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -155,7 +158,14 @@ class SentFiles:
 
 
 class PrinterSender:
-    """Watches one printer and sends its state once it has settled."""
+    """Watches one printer and sends its state once it has settled.
+
+    It also follows each AMS slot reading a spool: while no print is
+    underway, the AMS makes a slot active to read a newly inserted spool's
+    RFID tag and lets go once it has read both the tag and the remaining
+    percentage. Such a slot is reported ``settled`` for that spool, and the
+    state goes out right away instead of after the quiet period.
+    """
 
     def __init__(
         self,
@@ -174,6 +184,9 @@ class PrinterSender:
         self._pending: CALLBACK_TYPE | None = None
         self._lock = asyncio.Lock()
         self._sent_significant: tuple[Any, ...] | None = None
+        self._reading: set[tuple[int, int]] = set()
+        self._settled: set[SettledTray] = set()
+        self._sending_settled = False
 
     @callback
     def start(self, first_send_delay: float) -> None:
@@ -193,18 +206,54 @@ class PrinterSender:
 
     @callback
     def _on_change(self, _event: Event) -> None:
+        document = self._build_state()
+        if self._follow_reading(document):
+            self._schedule(SETTLED_SEND_DELAY.total_seconds())
+            self._sending_settled = True
+        elif self._sending_settled:
+            return
         # A significant change is sent once the printer has been quiet for a
         # while; while that wait runs, every change restarts it, so a burst
         # of intermediate states (a spool being inserted) only goes out once
         # it has ended. Anything else (progress, layers, a spool's
         # percentage) waits for the interval.
-        if self._pending is not None or self._significant() != self._sent_significant:
+        elif self._pending is not None or self._significant(document) != self._sent_significant:
             self._schedule(SETTLE_DELAY.total_seconds())
 
-    def _significant(self, document: dict[str, Any] | None = None) -> tuple[Any, ...]:
+    def _build_state(self) -> dict[str, Any]:
+        return build_state(self.printer, self._hass.states.get, dt_util.utcnow(), self._settled)
+
+    def _follow_reading(self, document: dict[str, Any]) -> bool:
+        """Note which slots the AMS reads a spool in; whether one just finished."""
+        reading_possible = document["status"] not in NOT_READING_STATUSES
+        finished = False
+
+        for unit in document["ams"]:
+            for tray in unit["trays"]:
+                slot = (unit["index"], tray["slot"])
+                # A slot's spool changed: whatever it read before is stale.
+                self._settled = {
+                    settled for settled in self._settled if settled[:2] != slot or settled[2] == tray.get("tray_uuid")
+                }
+                if tray["empty"]:
+                    self._reading.discard(slot)
+                elif tray["active"]:
+                    if reading_possible:
+                        self._reading.add(slot)
+                elif slot in self._reading and tray["tray_uuid"] is None:
+                    # A spool without an RFID tag: nothing to read.
+                    self._reading.discard(slot)
+                elif slot in self._reading and tray["remain"] != -1:
+                    self._reading.discard(slot)
+                    self._settled.add((*slot, tray["tray_uuid"]))
+                    finished = True
+
+        return finished
+
+    def _significant(self, document: dict[str, Any]) -> tuple[Any, ...]:
         """What in a state is worth sending right away: the printer's status,
-        which print it runs, and which spool each slot holds."""
-        document = document or build_state(self.printer, self._hass.states.get, dt_util.utcnow())
+        which print it runs, which spool each slot holds, and a spool that
+        ran out."""
         print_ = document["print"] or {}
         trays = [tray for unit in document["ams"] for tray in unit["trays"]]
         if document["external_spool"]:
@@ -217,6 +266,8 @@ class PrinterSender:
             print_.get("start_time"),
             tuple((tray.get("empty"), tray.get("active"), tray.get("tray_uuid")) for tray in trays),
             cover.state if cover else None,
+            document["stage"] == RUNOUT_STAGE,
+            (document["print_error"] or {}).get("code"),
         )
 
     @callback
@@ -232,6 +283,7 @@ class PrinterSender:
     @callback
     def _on_settled(self, _now: Any) -> None:
         self._pending = None
+        self._sending_settled = False
         self._hass.async_create_task(self.async_send_now())
 
     @callback
@@ -239,11 +291,12 @@ class PrinterSender:
         if self._pending is not None:
             self._pending()
             self._pending = None
+        self._sending_settled = False
 
     async def async_send_now(self) -> None:
         """Build the printer's current state and send it, then the print's files."""
         async with self._lock:
-            document = build_state(self.printer, self._hass.states.get, dt_util.utcnow())
+            document = self._build_state()
             if not await self._client.async_post_state(document):
                 return
             self._sent_significant = self._significant(document)

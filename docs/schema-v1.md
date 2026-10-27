@@ -28,7 +28,15 @@ requests. The print's files follow as separate requests, see
   weight, then its real reading, up to 23 seconds later); waiting for the
   burst to end means only the settled state is sent. A receiver should
   still not trust a spool's percentage in the first state it shows up in a
-  slot: the printer gives no signal that its reading is final.
+  slot, unless that slot is `settled` (below).
+- After **3 seconds** when an AMS has finished reading a spool. While no
+  print is underway, the AMS makes a slot active to read a newly inserted
+  spool's RFID tag, and lets go once it has read the tag and the remaining
+  percentage; that slot is then sent with `settled: true`. The AMS reads no
+  tags during a print: a spool inserted then stays unread (all zeros) until
+  the AMS reads it later.
+- After a spool runs out (stage `paused_filament_runout`) or a print error
+  appears or clears, once nothing has changed for 30 seconds.
 - Every **5 minutes** regardless (configurable from 60 to 3600 seconds), as a
   heartbeat. Everything else (progress, layers, end time, a spool's
   percentage, humidity) only reaches the receiver this way, and a missed
@@ -52,6 +60,8 @@ can arrive more than once.
   },
   "online": true,
   "status": "running",
+  "stage": "printing",
+  "print_error": null,
   "print": {
     "task_name": "Christmas Moose Tea Light",
     "progress_percent": 49,
@@ -77,9 +87,10 @@ can arrive more than once.
           "type": "PLA",
           "color": "#7D6556FF",
           "tray_weight": 1000,
-          "remain": 79
+          "remain": 79,
+          "settled": false
         },
-        { "slot": 2, "empty": true, "active": false }
+        { "slot": 2, "empty": true, "active": false, "settled": false }
       ]
     }
   ],
@@ -100,6 +111,10 @@ can arrive more than once.
 | `printer.name` | string or null | The device name in Home Assistant, as the user sees it. |
 | `online` | boolean | Whether Home Assistant currently reaches the printer. When `false`, everything else is the last known state. |
 | `status` | string | The print status as the Bambu Lab integration reports it, lowercase: `idle`, `init`, `prepare`, `slicing`, `running`, `pause`, `finish`, `failed`, `offline` or `unknown`. Anything else the integration does not know is sent as `unknown`. |
+| `stage` | string or null | What the printer is doing in more detail, as the Bambu Lab integration names it: `printing`, `changing_filament`, `paused_filament_runout` and so on. `null` when unknown. Added in 0.4.0. |
+| `print_error` | object or null | The error the printer reports for its print, `null` without one. Added in 0.4.0. |
+| `print_error.code` | string or null | Bambu's error code, e.g. `0700_8011`. A run-out spool in an AMS is `XXYY_8011`, with `XX` the kind of AMS (`07` AMS, `12` AMS Lite, `18` AMS HT) and `YY` its number counted from 0 (`FE`/`FF` for an external spool); the slot is not in the code, but it is the one that was active. |
+| `print_error.text` | string or null | The error's description in Home Assistant's language. |
 | `print` | object or null | The current or most recent print, `null` when the printer reports no task name, progress or start time. |
 | `print.task_name` | string or null | The task name as the printer reports it. |
 | `print.progress_percent` | integer or null | 0 to 100. |
@@ -122,6 +137,7 @@ can arrive more than once.
 | `trays[].color` | string or null | `#RRGGBBAA`, uppercase; a 6-digit colour is sent with `FF` added. |
 | `trays[].tray_weight` | integer or null | Full spool weight in grams. |
 | `trays[].remain` | integer | Remaining filament in percent, `-1` when the printer has not measured it (yet). |
+| `trays[].settled` | boolean | `true` when the integration saw the AMS read this spool in this slot (see When it is sent): its identity and percentage are final. Always `false` for the external spool, and `false` after Home Assistant restarts until the AMS reads the slot again. Added in 0.4.0. |
 | `external_spool` | tray or null | The external spool holder, in the same shape as a tray (without `slot`), or `null` when the printer has none. A printer with two holders (one per nozzle) reports the first. |
 
 ## Response
