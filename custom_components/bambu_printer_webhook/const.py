@@ -7,7 +7,7 @@ from typing import Final
 
 DOMAIN: Final = "bambu_printer_webhook"
 NAME: Final = "Bambu Printer Webhook"
-VERSION: Final = "0.2.2"
+VERSION: Final = "0.3.0"
 
 SCHEMA_VERSION: Final = 1
 
@@ -18,14 +18,18 @@ CONF_WEBHOOK_URL: Final = "webhook_url"
 CONF_TOKEN: Final = "token"
 
 SETTLE_DELAY: Final = timedelta(seconds=30)
-"""How long a printer's entities must be quiet before its state is sent.
+"""How long a printer's entities must be quiet before a significant change is sent.
 
 Inserting a spool was seen to leave up to 23 seconds between the new spool
 reported unmeasured and its real reading; 30 seconds clears that.
 """
 
-HEARTBEAT_INTERVAL: Final = timedelta(minutes=5)
-"""How often a printer's state is sent regardless of changes."""
+CONF_INTERVAL: Final = "interval"
+DEFAULT_INTERVAL_SECONDS: Final = 300
+MIN_INTERVAL_SECONDS: Final = 60
+MAX_INTERVAL_SECONDS: Final = 3600
+"""How often a printer's state is sent regardless of changes, and so how often
+minor changes (progress, layers, a spool's percentage) reach the webhook."""
 
 STARTUP_DELAY: Final = timedelta(seconds=30)
 """How long after setup the first state is sent, so ha-bambulab has connected."""

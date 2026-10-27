@@ -6,17 +6,31 @@ from typing import Any
 
 import aiohttp
 import voluptuous as vol
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
     TextSelector,
     TextSelectorConfig,
     TextSelectorType,
 )
 from yarl import URL
 
-from .const import CONF_TOKEN, CONF_WEBHOOK_URL, DOMAIN, NAME, REQUEST_TIMEOUT_SECONDS, SCHEMA_VERSION
+from .const import (
+    CONF_INTERVAL,
+    CONF_TOKEN,
+    CONF_WEBHOOK_URL,
+    DEFAULT_INTERVAL_SECONDS,
+    DOMAIN,
+    MAX_INTERVAL_SECONDS,
+    MIN_INTERVAL_SECONDS,
+    NAME,
+    REQUEST_TIMEOUT_SECONDS,
+    SCHEMA_VERSION,
+)
 
 
 def _schema(defaults: dict[str, Any]) -> vol.Schema:
@@ -86,6 +100,10 @@ class BambuPrinterWebhookConfigFlow(ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    @staticmethod
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        return BambuPrinterWebhookOptionsFlow()
+
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
@@ -112,4 +130,32 @@ class BambuPrinterWebhookConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="reconfigure", data_schema=_schema(user_input or dict(entry.data)), errors=errors
+        )
+
+
+class BambuPrinterWebhookOptionsFlow(OptionsFlow):
+    """How often minor changes are sent."""
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            return self.async_create_entry(data={CONF_INTERVAL: int(user_input[CONF_INTERVAL])})
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_INTERVAL,
+                        default=self.config_entry.options.get(CONF_INTERVAL, DEFAULT_INTERVAL_SECONDS),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=MIN_INTERVAL_SECONDS,
+                            max=MAX_INTERVAL_SECONDS,
+                            step=1,
+                            unit_of_measurement="s",
+                            mode=NumberSelectorMode.BOX,
+                        )
+                    ),
+                }
+            ),
         )

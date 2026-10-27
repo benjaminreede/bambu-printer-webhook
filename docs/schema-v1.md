@@ -20,15 +20,19 @@ requests. The print's files follow as separate requests, see
 
 ## When it is sent
 
-- After any change to one of the printer's entities, once nothing has changed
-  for **30 seconds**. Inserting a spool makes the printer report a burst of
+- After a significant change, once nothing has changed for **30 seconds**:
+  the printer's status, whether it is online, the task name or start time of
+  its print, or a slot's spool (inserted, taken out, or the one being printed
+  from). Inserting a spool makes the printer report a burst of
   intermediate states (the previous spool, then the new one without a
   weight, then its real reading, up to 23 seconds later); waiting for the
   burst to end means only the settled state is sent. A receiver should
   still not trust a spool's percentage in the first state it shows up in a
   slot: the printer gives no signal that its reading is final.
-- Every **5 minutes** regardless, as a heartbeat, so a missed request or a
-  receiver that was down catches up.
+- Every **5 minutes** regardless (configurable from 60 to 3600 seconds), as a
+  heartbeat. Everything else (progress, layers, end time, a spool's
+  percentage, humidity) only reaches the receiver this way, and a missed
+  request or a receiver that was down catches up.
 - Once shortly after Home Assistant starts.
 
 A receiver must therefore treat every request as idempotent: the same state
