@@ -87,6 +87,7 @@ can arrive more than once.
           "tray_uuid": "02976CE8418148D988489D5D82B1467C",
           "tag_uid": "A288022C00000100",
           "name": "Bambu PLA Matte",
+          "filament_id": "GFA01",
           "type": "PLA",
           "color": "#7D6556FF",
           "tray_weight": 1000,
@@ -135,7 +136,8 @@ can arrive more than once.
 | `trays[].active` | boolean | Whether the printer is feeding from this slot right now. |
 | `trays[].tray_uuid` | string or null | The spool's identity, the same from both of its RFID tags. `null` for a spool without a Bambu RFID tag (the printer reports all zeros there). |
 | `trays[].tag_uid` | string or null | The RFID tag that was read. A spool has a tag on each side, so this can differ between two readings of the same spool. `null` without a Bambu RFID tag. |
-| `trays[].name` | string or null | Filament name, e.g. `Bambu PLA Matte`. |
+| `trays[].name` | string or null | Filament name, e.g. `Bambu PLA Matte`. `null` when the Bambu Lab integration doesn't know the type (it says `unknown` for types missing from its own list). |
+| `trays[].filament_id` | string or null | Bambu's code for the filament type as read from the spool, e.g. `GFA01` for Bambu PLA Matte. Known even when `name` isn't. Added in 0.5.0. |
 | `trays[].type` | string or null | Material, e.g. `PLA`. |
 | `trays[].color` | string or null | `#RRGGBBAA`, uppercase; a 6-digit colour is sent with `FF` added. |
 | `trays[].tray_weight` | integer or null | Full spool weight in grams. |

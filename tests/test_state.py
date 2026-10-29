@@ -34,7 +34,9 @@ def _set_printing(bambu: BambuSetup) -> None:
     states.async_set(
         ids["ams_1_tray_3"],
         "Generic PLA",
-        tray_attributes(tray_uuid="0" * 32, tag_uid="0" * 16, name="Generic PLA", color="#ffffff", remain=-1),
+        tray_attributes(
+            tray_uuid="0" * 32, tag_uid="0" * 16, filament_id="GFL99", name="Generic PLA", color="#ffffff", remain=-1
+        ),
     )
     states.async_set(ids["ams_1_tray_4"], "unavailable")
     states.async_set(ids["ams_1_humidity_index"], "2")
@@ -78,6 +80,7 @@ async def test_builds_the_full_state_of_a_printing_printer(hass: HomeAssistant, 
                         "tray_uuid": "02976CE8418148D988489D5D82B1467C",
                         "tag_uid": "A288022C00000100",
                         "name": "Bambu PLA Matte",
+                        "filament_id": "GFA01",
                         "type": "PLA",
                         "color": "#7D6556FF",
                         "tray_weight": 1000,
@@ -92,6 +95,7 @@ async def test_builds_the_full_state_of_a_printing_printer(hass: HomeAssistant, 
                         "tray_uuid": None,
                         "tag_uid": None,
                         "name": "Generic PLA",
+                        "filament_id": "GFL99",
                         "type": "PLA",
                         "color": "#FFFFFFFF",
                         "tray_weight": 1000,
@@ -164,3 +168,17 @@ async def test_a_print_error_is_reported_with_its_code_and_text(hass: HomeAssist
         "code": "0700_8011",
         "text": "AMS filament ran out. Please insert a new filament into the AMS.",
     }
+
+
+async def test_a_type_the_bambu_lab_integration_does_not_know_is_sent_by_its_code(
+    hass: HomeAssistant, bambu: BambuSetup
+) -> None:
+    _set_printing(bambu)
+    hass.states.async_set(
+        bambu.entity_ids["ams_1_tray_1"], "unknown", tray_attributes(name="unknown", filament_id="GFA19")
+    )
+
+    (printer,) = find_printers(hass)
+    tray = build_state(printer, hass.states.get, NOW)["ams"][0]["trays"][0]
+
+    assert (tray["name"], tray["filament_id"]) == (None, "GFA19")
