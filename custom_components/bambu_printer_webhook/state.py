@@ -143,12 +143,28 @@ def _tray(state: State | None, slot: int | None) -> dict[str, Any]:
         "active": active,
         "tray_uuid": _rfid(attributes.get("tray_uuid")),
         "tag_uid": _rfid(attributes.get("tag_uid")),
-        "name": attributes.get("name") or None,
+        "name": _filament_name(attributes.get("name")),
+        "filament_id": _filament_id(attributes.get("filament_id")),
         "type": attributes.get("type") or None,
         "color": _color(attributes.get("color")),
         "tray_weight": _int(attributes.get("tray_weight")),
         "remain": _int(attributes.get("remain"), default=-1),
     }
+
+
+def _filament_name(value: Any) -> str | None:
+    """The filament's name; ha-bambulab says ``unknown`` for a type missing
+    from its own list (a newer one, such as Bambu PLA Pure)."""
+    if not isinstance(value, str) or value.strip().casefold() in ("", "unknown"):
+        return None
+    return value
+
+
+def _filament_id(value: Any) -> str | None:
+    """Bambu's code for the filament type as read from the spool, e.g. ``GFA01``."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value.strip().upper()
 
 
 def _rfid(value: Any) -> str | None:

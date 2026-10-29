@@ -119,6 +119,7 @@ def tray_attributes(**overrides: object) -> dict[str, object]:
         "active": False,
         "color": "#7D6556FF",
         "empty": False,
+        "filament_id": "GFA01",
         "name": "Bambu PLA Matte",
         "remain": 79,
         "tag_uid": "A288022C00000100",

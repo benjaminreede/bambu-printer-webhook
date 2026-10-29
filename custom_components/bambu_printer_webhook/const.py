@@ -7,7 +7,7 @@ from typing import Final
 
 DOMAIN: Final = "bambu_printer_webhook"
 NAME: Final = "Bambu Printer Webhook"
-VERSION: Final = "0.4.1"
+VERSION: Final = "0.5.0"
 
 SCHEMA_VERSION: Final = 1
 
