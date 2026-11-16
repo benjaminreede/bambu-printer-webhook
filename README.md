@@ -25,7 +25,18 @@ One JSON document per printer with its complete state, described in
 
 While a print runs, its cover image and 3mf file follow to the same URL as a
 multipart form, once per print. They come from the Bambu Lab integration's own
-cover image and file cache; this integration never connects to the printer.
+cover image and file cache.
+
+Once per printer, the prints still on its storage are sent too, so the
+receiver can add the prints from before the integration was set up. For that
+the integration reads the printer's storage over its local FTPS, with the
+address and access code from the Bambu Lab integration, and only while it
+isn't printing. Nothing on the printer is changed.
+
+When a printer's plug has an energy meter, choose it per printer under
+**Configure**, with the electricity price (a sensor with your tariff, or a
+fixed price): the state then carries the meter's reading and the price, so the
+receiver can work out what a print cost in electricity.
 
 Each request is a `POST` with the token as a bearer token in the
 `Authorization` header. A failed request is logged and not retried: the next

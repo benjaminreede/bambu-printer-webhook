@@ -98,7 +98,8 @@ can arrive more than once.
       ]
     }
   ],
-  "external_spool": null
+  "external_spool": null,
+  "energy": { "kwh": 1284.317, "price_per_kwh": 0.2715 }
 }
 ```
 
@@ -144,6 +145,9 @@ can arrive more than once.
 | `trays[].remain` | integer | Remaining filament in percent, `-1` when the printer has not measured it (yet). |
 | `trays[].settled` | boolean | `true` when the integration saw the AMS read this spool in this slot (see When it is sent): its identity and percentage are final. Always `false` for the external spool, and `false` after Home Assistant restarts until the AMS reads the slot again. Added in 0.4.0. |
 | `external_spool` | tray or null | The external spool holder, in the same shape as a tray (without `slot`), or `null` when the printer has none. A printer with two holders (one per nozzle) reports the first. |
+| `energy` | object or null | The printer's plug, when an energy meter was chosen for it in the options; `null` otherwise. Added in 0.6.0. |
+| `energy.kwh` | number or null | The meter's reading in kWh (converted from Wh or MWh), a running total: what a print used is the reading at its end minus the one at its start. `null` when the meter has no value. |
+| `energy.price_per_kwh` | number or null | The electricity price in euros per kWh at this moment: the price sensor chosen in the options (converted from cents), or the fixed price when there is no sensor or it has no value. `null` when neither is set. |
 
 ## Response
 
@@ -186,7 +190,7 @@ Accept: application/json
 | Field | Meaning |
 |---|---|
 | `schema_version` | Always `1`. |
-| `kind` | `cover_image` or `model`. |
+| `kind` | `cover_image` or `model`. A stored print is `history` (see Stored prints). |
 | `printer_serial` | The printer's serial number, as `printer.serial` in the state. |
 | `task_name` | The print's task name, as `print.task_name`. |
 | `start_time` | The print's start time, exactly as `print.start_time`: match on it with some margin, since it can shift once while a print is being prepared. |
@@ -200,5 +204,35 @@ print started; when there is none (no local access to the printer, or a file
 whose name doesn't match the task) no 3mf is sent. Files over 100 MB are not
 sent.
 
-A receiver tells the two kinds of request apart by their content type: JSON
-is a state, a multipart form is a file.
+## Stored prints
+
+Once per printer, the integration also sends every print the printer still
+has on its storage (SD card or USB stick), so a receiver can add the prints
+from before the integration was set up. Each 3mf there goes out as its own
+multipart request to the same URL, oldest first, after a delivered state of
+that printer.
+
+The storage is read over the printer's local FTPS with the address and access
+code from the Bambu Lab integration; without them (a printer set up through
+the cloud only) nothing is sent. It is only read while the printer isn't
+printing; when a print starts, or a request is refused or fails, the import
+stops and goes on from where it was after a later state. Once every stored
+print was delivered, the import is done for that printer and doesn't run
+again.
+
+| Field | Meaning |
+|---|---|
+| `schema_version` | Always `1`. |
+| `kind` | `history`. |
+| `printer_serial` | The printer's serial number, as `printer.serial` in the state. |
+| `task_name` | The file's name without folder and `.gcode.3mf`, as a printer names its print. |
+| `file_name` | The file's path on the storage, e.g. `/cache/Benchy.gcode.3mf`. With `printer_serial` it identifies the print across imports. |
+| `modified` | When the file was last written (sent to the printer), ISO 8601 in UTC, or empty when the printer didn't say. A file older than about half a year can only have its day. Sending the same file again overwrites it, so a print repeated from the same file shows only its last time. |
+| `weight_grams` | The estimated filament weight of the plate the file prints, or empty. |
+| `print_seconds` | The estimated print time of that plate in seconds, or empty. |
+| `file` | The plate's picture (`plate.png`), when the 3mf has one. Optional. |
+
+The storage says nothing about whether a print succeeded.
+
+A receiver tells the kinds of request apart by their content type: JSON is a
+state, a multipart form is a file or a stored print, told apart by `kind`.

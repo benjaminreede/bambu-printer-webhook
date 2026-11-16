@@ -2,6 +2,10 @@
 
 While a print runs, its cover image and 3mf file follow each state that was
 delivered, until each has been delivered once (again when it changes).
+
+Once per printer, the prints it still has on its storage are sent too, so the
+receiver can add the prints from before the integration was set up (see
+history.py).
 """
 
 from __future__ import annotations
@@ -33,6 +37,7 @@ from .const import (
     BAMBU_DOMAIN,
     DOMAIN,
     FILE_COVER_IMAGE,
+    FILE_HISTORY,
     FILE_MODEL,
     FILE_REQUEST_TIMEOUT_SECONDS,
     FILE_STATUSES,
@@ -47,7 +52,8 @@ from .const import (
 )
 from .discovery import PrinterEntities, find_printers
 from .files import cache_directories, find_model_file
-from .state import SettledTray, build_state
+from .history import PrinterStorage, StoredFile, read_model_info
+from .state import Price, SettledTray, build_state
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -108,6 +114,19 @@ class WebhookClient:
             data=form,
         )
 
+    async def async_post_history(self, fields: dict[str, str], thumbnail: bytes | None) -> bool:
+        """Send a print found on the printer's storage; whether it was delivered."""
+        form = aiohttp.FormData()
+        form.add_field("schema_version", "1")
+        form.add_field("kind", FILE_HISTORY)
+        for name, value in fields.items():
+            form.add_field(name, value)
+        if thumbnail is not None:
+            form.add_field("file", thumbnail, filename="plate.png", content_type="image/png")
+        return await self._post(
+            f"a stored print of printer {fields['printer_serial']}", FILE_REQUEST_TIMEOUT_SECONDS, data=form
+        )
+
     async def _post(self, what: str, timeout: float, **body: Any) -> bool:
         session = async_get_clientsession(self._hass)
         try:
@@ -157,6 +176,39 @@ class SentFiles:
         self._store.async_delay_save(lambda: self._sent, self.SAVE_DELAY)
 
 
+class HistoryImports:
+    """Which stored prints were delivered for each printer, and whether all were.
+
+    Kept across restarts, so the import resumes where it stopped and runs
+    only once.
+    """
+
+    SAVE_DELAY = 10
+
+    def __init__(self, hass: HomeAssistant, entry_id: str) -> None:
+        self._store: Store[dict[str, dict[str, Any]]] = Store(hass, 1, f"{DOMAIN}.{entry_id}.history")
+        self._imports: dict[str, dict[str, Any]] = {}
+
+    async def async_load(self) -> None:
+        self._imports = await self._store.async_load() or {}
+
+    def done(self, serial: str) -> bool:
+        return bool(self._imports.get(serial, {}).get("done"))
+
+    def sent(self, serial: str, stored: StoredFile) -> bool:
+        return stored.key in self._imports.get(serial, {}).get("sent", [])
+
+    @callback
+    def mark_sent(self, serial: str, stored: StoredFile) -> None:
+        self._imports.setdefault(serial, {"done": False, "sent": []})["sent"].append(stored.key)
+        self._store.async_delay_save(lambda: self._imports, self.SAVE_DELAY)
+
+    @callback
+    def mark_done(self, serial: str) -> None:
+        self._imports.setdefault(serial, {"done": False, "sent": []})["done"] = True
+        self._store.async_delay_save(lambda: self._imports, self.SAVE_DELAY)
+
+
 class PrinterSender:
     """Watches one printer and sends its state once it has settled.
 
@@ -175,9 +227,15 @@ class PrinterSender:
         client: WebhookClient,
         sent_files: SentFiles,
         interval: timedelta,
+        price: Price | None = None,
+        history: HistoryImports | None = None,
     ) -> None:
         self._hass = hass
         self.printer = printer
+        self._price = price
+        self._history = history
+        self._importing = False
+        self._reported_no_access = False
         self._client = client
         self._sent_files = sent_files
         self._interval = interval
@@ -225,7 +283,7 @@ class PrinterSender:
             self._schedule(SETTLE_DELAY.total_seconds())
 
     def _build_state(self) -> dict[str, Any]:
-        return build_state(self.printer, self._hass.states.get, dt_util.utcnow(), self._settled)
+        return build_state(self.printer, self._hass.states.get, dt_util.utcnow(), self._settled, self._price)
 
     def _follow_trays(self, document: dict[str, Any]) -> bool:
         """Note which slots the AMS reads a spool in; whether a slot just
@@ -320,6 +378,84 @@ class PrinterSender:
             if document["status"] in FILE_STATUSES and print_ and print_["start_time"]:
                 await self._async_send_cover(print_)
                 await self._async_send_model(print_)
+            elif self._may_import(document):
+                # After a delivered state, so the receiver knows the printer.
+                self._importing = True
+                self._hass.async_create_background_task(
+                    self._async_import_history(), f"{DOMAIN} history of {self.printer.serial}"
+                )
+
+    def _may_import(self, document: dict[str, Any]) -> bool:
+        return (
+            self._history is not None
+            and not self._importing
+            and not self._history.done(self.printer.serial)
+            and document["online"]
+            and document["status"] not in NOT_READING_STATUSES
+        )
+
+    def _storage_access(self) -> tuple[str, str] | None:
+        """The printer's address and LAN access code from ha-bambulab's setup."""
+        for entry in self._hass.config_entries.async_entries(BAMBU_DOMAIN):
+            if entry.data.get("serial") == self.printer.serial:
+                host = entry.options.get("host")
+                access_code = entry.options.get("access_code")
+                return (host, access_code) if host and access_code else None
+        return None
+
+    async def _async_import_history(self) -> None:
+        """Send every print on the printer's storage not sent yet, oldest first.
+
+        Stops when the printer starts printing or a print cannot be
+        delivered; a later state picks it up again.
+        """
+        try:
+            access = self._storage_access()
+            if access is None:
+                if not self._reported_no_access:
+                    _LOGGER.info(
+                        "Not importing the stored prints of printer %s: the Bambu Lab integration has no "
+                        "local address and access code for it",
+                        self.printer.serial,
+                    )
+                    self._reported_no_access = True
+                return
+            storage = await self._hass.async_add_executor_job(PrinterStorage, *access)
+            try:
+                await self._async_send_stored(storage)
+            finally:
+                await self._hass.async_add_executor_job(storage.close)
+        except Exception:  # noqa: BLE001 - an unreachable printer must not stop the states
+            _LOGGER.warning("Could not read the stored prints of printer %s", self.printer.serial, exc_info=True)
+        finally:
+            self._importing = False
+
+    async def _async_send_stored(self, storage: PrinterStorage) -> None:
+        assert self._history is not None
+        serial = self.printer.serial
+        stored_files = await self._hass.async_add_executor_job(storage.stored_files, dt_util.utcnow())
+        for stored in stored_files:
+            if self._history.sent(serial, stored):
+                continue
+            if self._build_state()["status"] in NOT_READING_STATUSES:
+                return
+            info = None
+            if stored.size <= MAX_MODEL_BYTES:
+                content = await self._hass.async_add_executor_job(storage.read, stored.path)
+                info = await self._hass.async_add_executor_job(read_model_info, content)
+            fields = {
+                "printer_serial": serial,
+                "task_name": stored.task_name,
+                "file_name": stored.path,
+                "modified": stored.modified.isoformat() if stored.modified else "",
+                "weight_grams": "" if info is None or info.weight_grams is None else str(info.weight_grams),
+                "print_seconds": "" if info is None or info.print_seconds is None else str(info.print_seconds),
+            }
+            if not await self._client.async_post_history(fields, info.thumbnail if info else None):
+                return
+            self._history.mark_sent(serial, stored)
+        self._history.mark_done(serial)
+        _LOGGER.info("Sent the %s stored prints of printer %s", len(stored_files), serial)
 
     def _file_fields(self, print_: dict[str, Any]) -> dict[str, str]:
         return {
@@ -385,11 +521,23 @@ class PrinterSender:
 class WebhookManager:
     """Finds every Bambu Lab printer and keeps a sender running for each."""
 
-    def __init__(self, hass: HomeAssistant, url: str, token: str, entry_id: str, interval: timedelta) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        url: str,
+        token: str,
+        entry_id: str,
+        interval: timedelta,
+        energy_sensors: dict[str, str] | None = None,
+        price: Price | None = None,
+    ) -> None:
         self._hass = hass
         self._interval = interval
+        self._energy_sensors = energy_sensors or {}
+        self._price = price
         self._client = WebhookClient(hass, url, token)
         self._sent_files = SentFiles(hass, entry_id)
+        self._history = HistoryImports(hass, entry_id)
         self._senders: dict[str, PrinterSender] = {}
         self._unsubscribers: list[CALLBACK_TYPE] = []
         self._rediscovery: CALLBACK_TYPE | None = None
@@ -407,6 +555,7 @@ class WebhookManager:
     async def async_load(self) -> None:
         """Read back which files were already delivered before a restart."""
         await self._sent_files.async_load()
+        await self._history.async_load()
 
     @callback
     def async_start(self) -> None:
@@ -455,6 +604,8 @@ class WebhookManager:
     @callback
     def _discover(self, first_send_delay: float) -> None:
         printers = {printer.serial: printer for printer in find_printers(self._hass)}
+        for serial, printer in printers.items():
+            printer.energy = self._energy_sensors.get(serial)
 
         for serial in list(self._senders):
             unchanged = serial in printers and printers[serial] == self._senders[serial].printer
@@ -464,7 +615,9 @@ class WebhookManager:
         for serial, printer in printers.items():
             if serial in self._senders:
                 continue
-            sender = PrinterSender(self._hass, printer, self._client, self._sent_files, self._interval)
+            sender = PrinterSender(
+                self._hass, printer, self._client, self._sent_files, self._interval, self._price, self._history
+            )
             sender.start(first_send_delay)
             self._senders[serial] = sender
 

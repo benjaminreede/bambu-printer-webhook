@@ -7,8 +7,8 @@ from datetime import UTC, datetime
 from homeassistant.core import HomeAssistant
 
 from custom_components.bambu_printer_webhook.const import VERSION
-from custom_components.bambu_printer_webhook.discovery import find_printers
-from custom_components.bambu_printer_webhook.state import build_state
+from custom_components.bambu_printer_webhook.discovery import PrinterEntities, find_printers
+from custom_components.bambu_printer_webhook.state import Price, build_state
 
 from .conftest import MODEL, SERIAL, BambuSetup, tray_attributes
 
@@ -107,6 +107,7 @@ async def test_builds_the_full_state_of_a_printing_printer(hass: HomeAssistant, 
             }
         ],
         "external_spool": {"empty": True, "active": False, "settled": False},
+        "energy": None,
     }
 
 
@@ -182,3 +183,23 @@ async def test_a_type_the_bambu_lab_integration_does_not_know_is_sent_by_its_cod
     tray = build_state(printer, hass.states.get, NOW)["ams"][0]["trays"][0]
 
     assert (tray["name"], tray["filament_id"]) == (None, "GFA19")
+
+
+async def test_the_plugs_meter_and_the_electricity_price_are_sent(hass: HomeAssistant) -> None:
+    hass.states.async_set("sensor.plug_energy", "1234.6", {"unit_of_measurement": "Wh"})
+    hass.states.async_set("sensor.tariff", "28.5", {"unit_of_measurement": "ct/kWh"})
+    printer = PrinterEntities(serial=SERIAL, model=MODEL, name="P1S", energy="sensor.plug_energy")
+
+    document = build_state(printer, hass.states.get, NOW, price=Price("sensor.tariff", 0.30))
+
+    assert document["energy"] == {"kwh": 1.235, "price_per_kwh": 0.285}
+
+
+async def test_the_fixed_price_is_used_while_the_price_sensor_has_no_value(hass: HomeAssistant) -> None:
+    hass.states.async_set("sensor.plug_energy", "12.75", {"unit_of_measurement": "kWh"})
+    hass.states.async_set("sensor.tariff", "unavailable")
+    printer = PrinterEntities(serial=SERIAL, model=MODEL, name="P1S", energy="sensor.plug_energy")
+
+    document = build_state(printer, hass.states.get, NOW, price=Price("sensor.tariff", 0.30))
+
+    assert document["energy"] == {"kwh": 12.75, "price_per_kwh": 0.30}

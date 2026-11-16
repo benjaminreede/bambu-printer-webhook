@@ -7,7 +7,7 @@ from typing import Final
 
 DOMAIN: Final = "bambu_printer_webhook"
 NAME: Final = "Bambu Printer Webhook"
-VERSION: Final = "0.5.0"
+VERSION: Final = "0.6.0"
 
 SCHEMA_VERSION: Final = 1
 
@@ -44,6 +44,13 @@ MAX_INTERVAL_SECONDS: Final = 3600
 """How often a printer's state is sent regardless of changes, and so how often
 minor changes (progress, layers, a spool's percentage) reach the webhook."""
 
+CONF_ENERGY_SENSORS: Final = "energy_sensors"
+"""Per printer serial, the entity id of the energy meter (kWh) of its plug."""
+
+CONF_PRICE_ENTITY: Final = "price_entity"
+CONF_PRICE_PER_KWH: Final = "price_per_kwh"
+"""The electricity price: a sensor (a dynamic tariff), else a fixed price."""
+
 STARTUP_DELAY: Final = timedelta(seconds=30)
 """How long after setup the first state is sent, so ha-bambulab has connected."""
 
@@ -63,6 +70,8 @@ FILE_STATUSES: Final = frozenset({"running", "pause"})
 
 FILE_COVER_IMAGE: Final = "cover_image"
 FILE_MODEL: Final = "model"
+FILE_HISTORY: Final = "history"
+"""A print found on the printer's storage, with the picture of its plate."""
 
 PRINT_STATUSES: Final = frozenset(
     {"idle", "init", "prepare", "slicing", "running", "pause", "finish", "failed", "offline", "unknown"}

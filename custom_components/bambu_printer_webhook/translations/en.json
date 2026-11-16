@@ -55,12 +55,16 @@
     "step": {
       "init": {
         "title": "Bambu Printer Webhook",
-        "description": "A change in a printer's status, its print or the spools it holds is sent within half a minute. Everything else (progress, layers, a spool's percentage) is sent with the interval.",
+        "description": "A change in a printer's status, its print or the spools it holds is sent within half a minute. Everything else (progress, layers, a spool's percentage) is sent with the interval.\n\nFor what a print cost in electricity: pick the energy meter (kWh) of each printer's plug, and the electricity price, either a sensor with your tariff or a fixed price. Without a sensor or when it has no value, the fixed price is used.",
         "data": {
-          "interval": "Interval"
+          "interval": "Interval",
+          "price_entity": "Electricity price sensor",
+          "price_per_kwh": "Fixed electricity price"
         },
         "data_description": {
-          "interval": "How often the state is sent regardless of changes, in seconds."
+          "interval": "How often the state is sent regardless of changes, in seconds.",
+          "price_entity": "A sensor with the price per kWh, for a dynamic tariff. In cents per kWh is converted.",
+          "price_per_kwh": "Euros per kWh, used without a price sensor."
         }
       }
     }
