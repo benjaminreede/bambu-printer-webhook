@@ -10,6 +10,7 @@ from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResu
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
+    DateSelector,
     EntitySelector,
     EntitySelectorConfig,
     NumberSelector,
@@ -23,11 +24,13 @@ from yarl import URL
 
 from .const import (
     CONF_ENERGY_SENSORS,
+    CONF_HISTORY_SINCE,
     CONF_INTERVAL,
     CONF_PRICE_ENTITY,
     CONF_PRICE_PER_KWH,
     CONF_TOKEN,
     CONF_WEBHOOK_URL,
+    DEFAULT_HISTORY_SINCE,
     DEFAULT_INTERVAL_SECONDS,
     DOMAIN,
     MAX_INTERVAL_SECONDS,
@@ -161,6 +164,7 @@ class BambuPrinterWebhookOptionsFlow(OptionsFlow):
                     },
                     CONF_PRICE_ENTITY: user_input.get(CONF_PRICE_ENTITY) or None,
                     CONF_PRICE_PER_KWH: float(price) if price not in (None, "") else None,
+                    CONF_HISTORY_SINCE: user_input.get(CONF_HISTORY_SINCE) or None,
                 }
             )
 
@@ -197,5 +201,12 @@ class BambuPrinterWebhookOptionsFlow(OptionsFlow):
                 )
             )
         )
+
+        schema[
+            vol.Optional(
+                CONF_HISTORY_SINCE,
+                description={"suggested_value": options.get(CONF_HISTORY_SINCE, DEFAULT_HISTORY_SINCE)},
+            )
+        ] = DateSelector()
 
         return self.async_show_form(step_id="init", data_schema=vol.Schema(schema))

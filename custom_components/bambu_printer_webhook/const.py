@@ -49,6 +49,9 @@ CONF_ENERGY_SENSORS: Final = "energy_sensors"
 
 CONF_PRICE_ENTITY: Final = "price_entity"
 CONF_PRICE_PER_KWH: Final = "price_per_kwh"
+CONF_HISTORY_SINCE: Final = "history_since"
+DEFAULT_HISTORY_SINCE: Final = "2026-09-01"
+"""Prints on a printer's storage written before this day are not imported."""
 """The electricity price: a sensor (a dynamic tariff), else a fixed price."""
 
 STARTUP_DELAY: Final = timedelta(seconds=30)

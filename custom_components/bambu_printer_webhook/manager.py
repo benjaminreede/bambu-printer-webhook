@@ -53,10 +53,16 @@ from .const import (
 from .discovery import PrinterEntities, find_printers
 from .energy import CostMeter
 from .files import cache_directories, find_model_file
-from .history import PrinterStorage, StoredFile, read_model_info
+from .history import PrinterStorage, StoredFile, read_gcode_head, read_model_info
 from .state import Price, SettledTray, build_state, meter_kwh, price_per_kwh
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _modified(stored: StoredFile) -> str:
+    if stored.modified is None:
+        return ""
+    return stored.modified.isoformat() if stored.exact_time else stored.modified.date().isoformat()
 
 
 class WebhookClient:
@@ -257,8 +263,10 @@ class PrinterSender:
         price: Price | None = None,
         history: HistoryImports | None = None,
         energy_costs: EnergyCosts | None = None,
+        history_since: datetime | None = None,
     ) -> None:
         self._hass = hass
+        self._history_since = history_since
         self.printer = printer
         self._price = price
         self._energy_costs = energy_costs
@@ -469,7 +477,7 @@ class PrinterSender:
                     )
                     self._reported_no_access = True
                 return
-            storage = await self._hass.async_add_executor_job(PrinterStorage, *access)
+            storage = await self._hass.async_add_executor_job(PrinterStorage, *access, dt_util.DEFAULT_TIME_ZONE)
             try:
                 await self._async_send_stored(storage)
             finally:
@@ -482,21 +490,27 @@ class PrinterSender:
     async def _async_send_stored(self, storage: PrinterStorage) -> None:
         assert self._history is not None
         serial = self.printer.serial
-        stored_files = await self._hass.async_add_executor_job(storage.stored_files, dt_util.utcnow())
+        stored_files = await self._hass.async_add_executor_job(
+            storage.stored_files, dt_util.utcnow(), self._history_since
+        )
         for stored in stored_files:
             if self._history.sent(serial, stored):
                 continue
             if self._build_state()["status"] in NOT_READING_STATUSES:
                 return
             info = None
-            if stored.size <= MAX_MODEL_BYTES:
+            if stored.is_plate:
+                head = await self._hass.async_add_executor_job(storage.read_head, stored.path)
+                info = await self._hass.async_add_executor_job(read_gcode_head, head)
+            elif stored.size <= MAX_MODEL_BYTES:
                 content = await self._hass.async_add_executor_job(storage.read, stored.path)
                 info = await self._hass.async_add_executor_job(read_model_info, content)
             fields = {
                 "printer_serial": serial,
                 "task_name": stored.task_name,
                 "file_name": stored.path,
-                "modified": stored.modified.isoformat() if stored.modified else "",
+                # Only the day, when that is all the storage gave.
+                "modified": _modified(stored),
                 "weight_grams": "" if info is None or info.weight_grams is None else str(info.weight_grams),
                 "print_seconds": "" if info is None or info.print_seconds is None else str(info.print_seconds),
             }
@@ -579,8 +593,10 @@ class WebhookManager:
         interval: timedelta,
         energy_sensors: dict[str, str] | None = None,
         price: Price | None = None,
+        history_since: datetime | None = None,
     ) -> None:
         self._hass = hass
+        self._history_since = history_since
         self._interval = interval
         self._energy_sensors = energy_sensors or {}
         self._price = price
@@ -675,6 +691,7 @@ class WebhookManager:
                 self._price,
                 self._history,
                 self._energy_costs,
+                self._history_since,
             )
             sender.start(first_send_delay)
             self._senders[serial] = sender

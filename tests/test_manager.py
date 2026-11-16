@@ -12,6 +12,7 @@ from aiohttp import FormData
 from homeassistant.components.image import Image
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
@@ -452,7 +453,13 @@ async def test_the_interval_can_be_changed_in_the_options(
     result = await hass.config_entries.options.async_init(entry.entry_id)
     result = await hass.config_entries.options.async_configure(result["flow_id"], {"interval": 120})
     await hass.async_block_till_done()
-    assert entry.options == {"interval": 120, "energy_sensors": {}, "price_entity": None, "price_per_kwh": None}
+    assert entry.options == {
+        "interval": 120,
+        "energy_sensors": {},
+        "price_entity": None,
+        "price_per_kwh": None,
+        "history_since": None,
+    }
     await _tick(hass, freezer, 31)
     webhook.mock_calls.clear()
 
@@ -512,22 +519,29 @@ async def test_each_kwh_is_paid_at_the_price_of_the_moment_it_was_used(
 
 
 class _FakeStorage:
-    """A printer's storage with two prints on it."""
+    """A printer's storage with three prints on it: two 3mf's, one known only
+    by its day, and the G-code of another plate of a project."""
 
     files = [
-        StoredFile("/cache/Old box.gcode.3mf", 9, datetime(2026, 3, 2, 10, 0, tzinfo=UTC)),
+        StoredFile("/cache/Old box.gcode.3mf", 9, datetime(2026, 3, 2, tzinfo=UTC), exact_time=False),
         StoredFile("/Benchy.gcode.3mf", 9, datetime(2026, 9, 1, 8, 30, tzinfo=UTC)),
+        StoredFile("/cache/Benchy_plate_2.gcode", 9, datetime(2026, 9, 2, 10, 0, tzinfo=UTC), project="Benchy"),
     ]
     opened: list[tuple[str, str]] = []
+    since: list[datetime | None] = []
 
-    def __init__(self, host: str, access_code: str) -> None:
+    def __init__(self, host: str, access_code: str, _timezone: object = None) -> None:
         _FakeStorage.opened.append((host, access_code))
 
-    def stored_files(self, _now: datetime) -> list[StoredFile]:
+    def stored_files(self, _now: datetime, since: datetime | None = None) -> list[StoredFile]:
+        _FakeStorage.since.append(since)
         return list(self.files)
 
     def read(self, _path: str) -> bytes:
         return b"not a zip"
+
+    def read_head(self, _path: str) -> bytes:
+        return b"; total filament weight [g] : 12.5\n; model printing time: 1h; total estimated time: 1h 2m 3s\n"
 
     def close(self) -> None:
         pass
@@ -536,6 +550,7 @@ class _FakeStorage:
 @pytest.fixture
 def storage():
     _FakeStorage.opened = []
+    _FakeStorage.since = []
     with patch("custom_components.bambu_printer_webhook.manager.PrinterStorage", _FakeStorage):
         yield _FakeStorage
 
@@ -561,10 +576,17 @@ async def test_the_prints_on_the_printers_storage_are_sent_once(
 
     assert storage.opened == [("192.168.1.50", "12345678")]
     posts = _history_posts(webhook)
-    assert [post["task_name"] for post in posts] == ["Old box", "Benchy"]
+    assert [post["task_name"] for post in posts] == ["Old box", "Benchy", "Benchy"]
     assert posts[0]["file_name"] == "/cache/Old box.gcode.3mf"
-    assert posts[0]["modified"] == "2026-03-02T10:00:00+00:00"
+    assert posts[0]["modified"] == "2026-03-02", "only the day, as that is all the storage gave"
     assert "file" not in posts[0], "a file that is no 3mf has no picture"
+    assert posts[1]["modified"] == "2026-09-01T08:30:00+00:00"
+    assert (posts[2]["file_name"], posts[2]["weight_grams"], posts[2]["print_seconds"]) == (
+        "/cache/Benchy_plate_2.gcode",
+        "12.5",
+        "3723",
+    )
+    assert storage.since == [datetime(2026, 9, 1, tzinfo=dt_util.DEFAULT_TIME_ZONE)]
 
     webhook.mock_calls.clear()
     await _tick(hass, freezer, 301)

@@ -208,9 +208,18 @@ sent.
 
 Once per printer, the integration also sends every print the printer still
 has on its storage (SD card or USB stick), so a receiver can add the prints
-from before the integration was set up. Each 3mf there goes out as its own
-multipart request to the same URL, oldest first, after a delivered state of
-that printer.
+from before the integration was set up. Only files written since the day set
+under **Configure** are sent (1 September 2026 unless changed; empty means
+all). Each print goes out as its own multipart request to the same URL,
+oldest first, after a delivered state of that printer.
+
+A printer keeps, per project, the 3mf last sent to it (holding the one plate
+it was sent for) and, per plate it printed, that plate's G-code named
+`<project>_plate_<n>.gcode`. Sending a project again overwrites both. So a
+print is each 3mf, and each G-code of another plate of a project whose 3mf is
+next to it; the G-code of the plate in the 3mf (written within the hour after
+it) is that same print. A G-code whose name matches no 3mf (the printer cuts
+names off at their first dot) is left out.
 
 The storage is read over the printer's local FTPS with the address and access
 code from the Bambu Lab integration; without them (a printer set up through
@@ -225,12 +234,12 @@ again.
 | `schema_version` | Always `1`. |
 | `kind` | `history`. |
 | `printer_serial` | The printer's serial number, as `printer.serial` in the state. |
-| `task_name` | The file's name without folder and `.gcode.3mf`, as a printer names its print. |
-| `file_name` | The file's path on the storage, e.g. `/cache/Benchy.gcode.3mf`. With `printer_serial` it identifies the print across imports. |
-| `modified` | When the file was last written (sent to the printer), ISO 8601 in UTC, or empty when the printer didn't say. A file older than about half a year can only have its day. Sending the same file again overwrites it, so a print repeated from the same file shows only its last time. |
-| `weight_grams` | The estimated filament weight of the plate the file prints, or empty. |
+| `task_name` | The project's name: the 3mf's name without folder and `.gcode.3mf`, as a printer names its print. The same for every plate of the project. |
+| `file_name` | The file's path on the storage, e.g. `/cache/Benchy.gcode.3mf` or `/cache/Benchy_plate_2.gcode`. With `printer_serial` it identifies the print across imports. |
+| `modified` | When the file was last written (sent to the printer, or for a plate's G-code when it started printing), ISO 8601 with its offset, or empty when the printer didn't say. Only a date (`2026-03-02`) when the printer gave no more than the day, as it does for a file older than about half a year. Times the printer lists the way `ls -l` does are its local time, taken to be Home Assistant's. Sending the same file again overwrites it, so a print repeated from the same file shows only its last time. |
+| `weight_grams` | The estimated filament weight of the plate, or empty: from the 3mf's slice info, or from a G-code's header. |
 | `print_seconds` | The estimated print time of that plate in seconds, or empty. |
-| `file` | The plate's picture (`plate.png`), when the 3mf has one. Optional. |
+| `file` | The plate's picture (`plate.png`), from the 3mf or the largest one in a G-code's header. Optional. |
 
 The storage says nothing about whether a print succeeded.
 
