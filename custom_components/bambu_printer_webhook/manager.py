@@ -513,6 +513,8 @@ class PrinterSender:
                 "modified": _modified(stored),
                 "weight_grams": "" if info is None or info.weight_grams is None else str(info.weight_grams),
                 "print_seconds": "" if info is None or info.print_seconds is None else str(info.print_seconds),
+                "plate": "" if info is None or info.plate is None else str(info.plate),
+                "plate_objects": "" if info is None or info.objects is None else str(info.objects),
             }
             if not await self._client.async_post_history(fields, info.thumbnail if info else None):
                 return

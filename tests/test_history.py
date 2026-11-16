@@ -30,7 +30,10 @@ def _sliced_3mf(plate: int) -> bytes:
             '<plate><metadata key="index" value="1"/><metadata key="prediction" value="600"/>'
             '<metadata key="weight" value="3.10"/></plate>'
             '<plate><metadata key="index" value="2"/><metadata key="prediction" value="5400"/>'
-            '<metadata key="weight" value="42.75"/></plate>'
+            '<metadata key="weight" value="42.75"/>'
+            '<object identify_id="1" name="Gewei" skipped="false"/>'
+            '<object identify_id="2" name="Gewei" skipped="false"/>'
+            '<object identify_id="3" name="Gewei" skipped="true"/></plate>'
             "</config>",
         )
         archive.writestr(f"Metadata/plate_{plate}.gcode", "G28")
@@ -39,9 +42,10 @@ def _sliced_3mf(plate: int) -> bytes:
     return buffer.getvalue()
 
 
-def test_the_plate_a_3mf_prints_gives_its_weight_time_and_picture() -> None:
+def test_the_plate_a_3mf_prints_gives_its_weight_time_objects_and_picture() -> None:
     info = read_model_info(_sliced_3mf(plate=2))
 
+    assert (info.plate, info.objects) == (2, 2)
     assert info.weight_grams == 42.75
     assert info.print_seconds == 5400
     assert info.thumbnail == b"plate-2"
@@ -111,6 +115,7 @@ def test_a_plates_g_code_header_gives_its_weight_time_and_largest_picture() -> N
         "; HEADER_BLOCK_START\n"
         "; model printing time: 1h 2m 3s; total estimated time: 1d 1h 0m 5s\n"
         "; total filament weight [g] : 10.25,2.50\n"
+        "; model label id: 8,39,50,61\n"
         "; HEADER_BLOCK_END\n"
         "; THUMBNAIL_BLOCK_START\n"
         f"; thumbnail begin 50x50 {len(small)}\n; {small}\n; thumbnail end\n"
@@ -121,3 +126,4 @@ def test_a_plates_g_code_header_gives_its_weight_time_and_largest_picture() -> N
     info = read_gcode_head(head)
 
     assert (info.weight_grams, info.print_seconds, info.thumbnail) == (12.75, 90005, b"\x89PNG large picture")
+    assert info.objects == 4

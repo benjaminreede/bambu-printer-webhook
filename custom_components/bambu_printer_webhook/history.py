@@ -46,6 +46,7 @@ _HEADER_WEIGHT = re.compile(r"^; total filament weight \[g\] : (?P<grams>[\d.,]+
 _HEADER_TIME = re.compile(
     r"^; (?:model printing time: [^;\n]*; )?total estimated time: (?P<time>[^;\n]+)", re.MULTILINE
 )
+_HEADER_LABELS = re.compile(r"^; model label id: (?P<labels>[\d,\s]+)$", re.MULTILINE)
 _DURATION_PART = re.compile(r"(\d+)\s*([dhms])")
 _THUMBNAIL = re.compile(
     r"^; thumbnail(?:_png)? begin (?P<width>\d+)x(?P<height>\d+) \d+\n"
@@ -100,6 +101,9 @@ class ModelInfo:
     weight_grams: float | None
     print_seconds: int | None
     thumbnail: bytes | None
+    plate: int | None = None
+    objects: int | None = None
+    """How many objects stand on the plate."""
 
 
 class _ImplicitFTPS(ftplib.FTP_TLS):
@@ -301,6 +305,7 @@ def read_model_info(content: bytes) -> ModelInfo:
 
         weight: float | None = None
         seconds: int | None = None
+        objects: int | None = None
         if "Metadata/slice_info.config" in names:
             try:
                 root = ElementTree.fromstring(archive.read("Metadata/slice_info.config"))
@@ -313,16 +318,20 @@ def read_model_info(content: bytes) -> ModelInfo:
                 weight = _float(metadata.get("weight"))
                 prediction = _float(metadata.get("prediction"))
                 seconds = int(prediction) if prediction is not None else None
+                standing = [item for item in element.iter("object") if item.get("skipped") != "true"]
+                objects = len(standing) or None
 
         picture = f"Metadata/plate_{plate}.png"
         thumbnail = archive.read(picture) if picture in names else None
 
-    return ModelInfo(weight, seconds, thumbnail)
+    return ModelInfo(weight, seconds, thumbnail, plate if sliced else None, objects)
 
 
 def read_gcode_head(content: bytes) -> ModelInfo:
     """What the header at the start of a plate's G-code says: the estimated
-    weight and time, and the largest picture of the plate in it."""
+    weight and time, how many objects stand on the plate (one label each),
+    and the largest picture of the plate in it. The plate is in the file's
+    name, not in here."""
     text = content.decode("utf-8", errors="replace")
 
     weight_match = _HEADER_WEIGHT.search(text)
@@ -350,7 +359,10 @@ def read_gcode_head(content: bytes) -> ModelInfo:
         if picture.startswith(b"\x89PNG"):
             thumbnail, largest = picture, area
 
-    return ModelInfo(weight, seconds, thumbnail)
+    labels_match = _HEADER_LABELS.search(text)
+    objects = len([label for label in labels_match["labels"].split(",") if label.strip()]) if labels_match else None
+
+    return ModelInfo(weight, seconds, thumbnail, objects=objects or None)
 
 
 def parse_duration(value: str) -> int | None:

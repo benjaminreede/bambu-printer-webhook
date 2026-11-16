@@ -239,6 +239,8 @@ again.
 | `modified` | When the file was last written (sent to the printer, or for a plate's G-code when it started printing), ISO 8601 with its offset, or empty when the printer didn't say. Only a date (`2026-03-02`) when the printer gave no more than the day, as it does for a file older than about half a year. Times the printer lists the way `ls -l` does are its local time, taken to be Home Assistant's. Sending the same file again overwrites it, so a print repeated from the same file shows only its last time. |
 | `weight_grams` | The estimated filament weight of the plate, or empty: from the 3mf's slice info, or from a G-code's header. |
 | `print_seconds` | The estimated print time of that plate in seconds, or empty. |
+| `plate` | Which plate of the project this is, or empty: the plate whose G-code the 3mf holds, or the number in a G-code's name. The plates of one project share its name, so this is what tells them apart. |
+| `plate_objects` | How many objects stand on the plate, or empty: from the 3mf's slice info (skipped objects left out), or one per label id in a G-code's header. |
 | `file` | The plate's picture (`plate.png`), from the 3mf or the largest one in a G-code's header. Optional. |
 
 The storage says nothing about whether a print succeeded.
