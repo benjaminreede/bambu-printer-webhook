@@ -51,9 +51,10 @@ from .const import (
     STARTUP_DELAY,
 )
 from .discovery import PrinterEntities, find_printers
+from .energy import CostMeter
 from .files import cache_directories, find_model_file
 from .history import PrinterStorage, StoredFile, read_model_info
-from .state import Price, SettledTray, build_state
+from .state import Price, SettledTray, build_state, meter_kwh, price_per_kwh
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -209,6 +210,32 @@ class HistoryImports:
         self._store.async_delay_save(lambda: self._imports, self.SAVE_DELAY)
 
 
+class EnergyCosts:
+    """What each printer's plug has cost so far (see energy.py), kept across restarts."""
+
+    SAVE_DELAY = 60
+
+    def __init__(self, hass: HomeAssistant, entry_id: str) -> None:
+        self._store: Store[dict[str, dict[str, Any]]] = Store(hass, 1, f"{DOMAIN}.{entry_id}.energy_costs")
+        self._meters: dict[str, CostMeter] = {}
+
+    async def async_load(self) -> None:
+        stored = await self._store.async_load() or {}
+        self._meters = {serial: CostMeter(meter.get("kwh"), meter.get("cost", 0.0)) for serial, meter in stored.items()}
+
+    def cost(self, serial: str) -> float:
+        meter = self._meters.get(serial)
+        return meter.cost if meter is not None else 0.0
+
+    @callback
+    def read(self, serial: str, kwh: float | None, price_per_kwh: float | None) -> None:
+        if self._meters.setdefault(serial, CostMeter()).read(kwh, price_per_kwh):
+            self._store.async_delay_save(self._data, self.SAVE_DELAY)
+
+    def _data(self) -> dict[str, dict[str, Any]]:
+        return {serial: {"kwh": meter.kwh, "cost": meter.cost} for serial, meter in self._meters.items()}
+
+
 class PrinterSender:
     """Watches one printer and sends its state once it has settled.
 
@@ -229,10 +256,12 @@ class PrinterSender:
         interval: timedelta,
         price: Price | None = None,
         history: HistoryImports | None = None,
+        energy_costs: EnergyCosts | None = None,
     ) -> None:
         self._hass = hass
         self.printer = printer
         self._price = price
+        self._energy_costs = energy_costs
         self._history = history
         self._importing = False
         self._reported_no_access = False
@@ -255,6 +284,12 @@ class PrinterSender:
             async_track_state_change_event(self._hass, sorted(self.printer.entity_ids), self._on_change)
         )
         self._unsubscribers.append(async_track_time_interval(self._hass, self._on_heartbeat, self._interval))
+        if self.printer.energy is not None and self._pays_energy:
+            # Not a reason to send: the reading goes out with the next state.
+            self._unsubscribers.append(
+                async_track_state_change_event(self._hass, [self.printer.energy], self._on_meter)
+            )
+            self._on_meter(None)
         # What each slot holds now, so the first change can be compared.
         self._follow_trays(self._build_state())
         self._schedule(first_send_delay)
@@ -282,8 +317,22 @@ class PrinterSender:
         elif self._pending is not None or self._significant(document) != self._sent_significant:
             self._schedule(SETTLE_DELAY.total_seconds())
 
+    @property
+    def _pays_energy(self) -> bool:
+        return self._energy_costs is not None and self._price is not None and self._price.configured
+
+    @callback
+    def _on_meter(self, _event: Event | None) -> None:
+        """Pay a new reading of the plug's meter at the price of this moment."""
+        assert self._energy_costs is not None and self._price is not None and self.printer.energy is not None
+        get_state = self._hass.states.get
+        self._energy_costs.read(
+            self.printer.serial, meter_kwh(get_state(self.printer.energy)), price_per_kwh(get_state, self._price)
+        )
+
     def _build_state(self) -> dict[str, Any]:
-        return build_state(self.printer, self._hass.states.get, dt_util.utcnow(), self._settled, self._price)
+        cost = self._energy_costs.cost(self.printer.serial) if self._pays_energy else None
+        return build_state(self.printer, self._hass.states.get, dt_util.utcnow(), self._settled, cost)
 
     def _follow_trays(self, document: dict[str, Any]) -> bool:
         """Note which slots the AMS reads a spool in; whether a slot just
@@ -538,6 +587,7 @@ class WebhookManager:
         self._client = WebhookClient(hass, url, token)
         self._sent_files = SentFiles(hass, entry_id)
         self._history = HistoryImports(hass, entry_id)
+        self._energy_costs = EnergyCosts(hass, entry_id)
         self._senders: dict[str, PrinterSender] = {}
         self._unsubscribers: list[CALLBACK_TYPE] = []
         self._rediscovery: CALLBACK_TYPE | None = None
@@ -553,9 +603,10 @@ class WebhookManager:
         return self._senders
 
     async def async_load(self) -> None:
-        """Read back which files were already delivered before a restart."""
+        """Read back what was kept from before a restart: delivered files, imports and energy costs."""
         await self._sent_files.async_load()
         await self._history.async_load()
+        await self._energy_costs.async_load()
 
     @callback
     def async_start(self) -> None:
@@ -616,7 +667,14 @@ class WebhookManager:
             if serial in self._senders:
                 continue
             sender = PrinterSender(
-                self._hass, printer, self._client, self._sent_files, self._interval, self._price, self._history
+                self._hass,
+                printer,
+                self._client,
+                self._sent_files,
+                self._interval,
+                self._price,
+                self._history,
+                self._energy_costs,
             )
             sender.start(first_send_delay)
             self._senders[serial] = sender

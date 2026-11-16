@@ -63,7 +63,7 @@
         },
         "data_description": {
           "interval": "Hoe vaak de stand hoe dan ook verstuurd wordt, in seconden.",
-          "price_entity": "Een sensor met de prijs per kWh, voor een dynamisch tarief. In cent per kWh wordt omgerekend.",
+          "price_entity": "Een sensor met de all-in prijs per kWh (inclusief belastingen), voor een dynamisch tarief: elke kWh wordt afgerekend tegen de prijs van het moment waarop hij verbruikt is. In cent per kWh wordt omgerekend.",
           "price_per_kwh": "Euro per kWh, als er geen prijssensor is."
         }
       }

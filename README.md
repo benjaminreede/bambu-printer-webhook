@@ -35,8 +35,10 @@ isn't printing. Nothing on the printer is changed.
 
 When a printer's plug has an energy meter, choose it per printer under
 **Configure**, with the electricity price (a sensor with your tariff, or a
-fixed price): the state then carries the meter's reading and the price, so the
-receiver can work out what a print cost in electricity.
+fixed price): the state then carries the meter's reading and what the plug has
+cost so far, each kWh paid at the price of the moment it was used, so the
+receiver can work out what a print cost in electricity, with a dynamic tariff
+too.
 
 Each request is a `POST` with the token as a bearer token in the
 `Authorization` header. A failed request is logged and not retried: the next

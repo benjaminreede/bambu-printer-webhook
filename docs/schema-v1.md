@@ -99,7 +99,7 @@ can arrive more than once.
     }
   ],
   "external_spool": null,
-  "energy": { "kwh": 1284.317, "price_per_kwh": 0.2715 }
+  "energy": { "kwh": 1284.317, "cost": 312.4471 }
 }
 ```
 
@@ -147,7 +147,7 @@ can arrive more than once.
 | `external_spool` | tray or null | The external spool holder, in the same shape as a tray (without `slot`), or `null` when the printer has none. A printer with two holders (one per nozzle) reports the first. |
 | `energy` | object or null | The printer's plug, when an energy meter was chosen for it in the options; `null` otherwise. Added in 0.6.0. |
 | `energy.kwh` | number or null | The meter's reading in kWh (converted from Wh or MWh), a running total: what a print used is the reading at its end minus the one at its start. `null` when the meter has no value. |
-| `energy.price_per_kwh` | number or null | The electricity price in euros per kWh at this moment: the price sensor chosen in the options (converted from cents), or the fixed price when there is no sensor or it has no value. `null` when neither is set. |
+| `energy.cost` | number or null | What the plug has cost in euros since its meter was chosen, a running total like `kwh`: what a print cost is the total at its end minus the one at its start. Each new meter reading is paid at the price of that moment, from the price sensor chosen in the options (converted from cents) or the fixed price when there is no sensor or it has no value, so a dynamic tariff is followed per quarter of an hour. While neither has a value, what is used waits to be paid at the next known price. Kept across restarts; a meter that goes back starts over from its new reading without cost. `null` when no price is set. |
 
 ## Response
 

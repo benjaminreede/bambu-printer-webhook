@@ -480,7 +480,35 @@ async def test_each_printers_plug_meter_and_the_price_are_chosen_in_the_options(
 
     await _tick(hass, freezer, 301)
 
-    assert webhook.mock_calls[-1][2]["energy"] == {"kwh": 3.2, "price_per_kwh": 0.27}
+    assert webhook.mock_calls[-1][2]["energy"] == {"kwh": 3.2, "cost": 0.0}
+
+
+async def test_each_kwh_is_paid_at_the_price_of_the_moment_it_was_used(
+    hass: HomeAssistant, bambu: BambuSetup, webhook: AiohttpClientMocker, freezer
+) -> None:
+    hass.states.async_set("sensor.plug_energy", "10.0", {"unit_of_measurement": "kWh"})
+    hass.states.async_set("sensor.tariff", "0.20", {"unit_of_measurement": "EUR/kWh"})
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"webhook_url": URL, "token": "secret"},
+        unique_id=URL,
+        options={"interval": 300, "energy_sensors": {SERIAL: "sensor.plug_energy"}, "price_entity": "sensor.tariff"},
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    await _tick(hass, freezer, 31)
+
+    hass.states.async_set("sensor.plug_energy", "11.0", {"unit_of_measurement": "kWh"})
+    await hass.async_block_till_done()
+    hass.states.async_set("sensor.tariff", "40", {"unit_of_measurement": "ct/kWh"})
+    await hass.async_block_till_done()
+    hass.states.async_set("sensor.plug_energy", "11.5", {"unit_of_measurement": "kWh"})
+    await hass.async_block_till_done()
+    webhook.mock_calls.clear()
+    await _tick(hass, freezer, 301)
+
+    assert webhook.mock_calls[-1][2]["energy"] == {"kwh": 11.5, "cost": 0.4}
 
 
 class _FakeStorage:

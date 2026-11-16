@@ -31,6 +31,10 @@ class Price:
     entity_id: str | None = None
     per_kwh: float | None = None
 
+    @property
+    def configured(self) -> bool:
+        return self.entity_id is not None or self.per_kwh is not None
+
 
 _MISSING = {None, "", STATE_UNKNOWN, STATE_UNAVAILABLE, "none"}
 _NO_RFID = {"0" * 32, "0" * 16}
@@ -41,13 +45,13 @@ def build_state(
     get_state: StateGetter,
     now: datetime,
     settled: Collection[SettledTray] = (),
-    price: Price | None = None,
+    energy_cost: float | None = None,
 ) -> dict[str, Any]:
     """The full state of one printer, as sent to the webhook.
 
     ``settled`` holds the slots the AMS was seen reading a spool in, with
-    the spool it read; see PrinterSender. ``price`` is where the electricity
-    price comes from.
+    the spool it read; see PrinterSender. ``energy_cost`` is what the
+    printer's plug has cost so far; see EnergyCosts.
     """
     status = _status(printer, get_state)
 
@@ -63,7 +67,7 @@ def build_state(
         "print": _print(printer, get_state),
         "ams": [_ams(unit, get_state, settled) for unit in printer.ams],
         "external_spool": _external_spool(printer, get_state),
-        "energy": _energy(printer, get_state, price),
+        "energy": _energy(printer, get_state, energy_cost),
     }
 
 
@@ -113,15 +117,16 @@ def _print(printer: PrinterEntities, get_state: StateGetter) -> dict[str, Any] |
     return document
 
 
-def _energy(printer: PrinterEntities, get_state: StateGetter, price: Price | None) -> dict[str, Any] | None:
-    """The plug's meter reading in kWh and the price of a kWh, when the
-    printer has a meter."""
+def _energy(printer: PrinterEntities, get_state: StateGetter, cost: float | None) -> dict[str, Any] | None:
+    """The plug's meter reading in kWh and what it has cost so far, when
+    the printer has a meter."""
     if printer.energy is None:
         return None
-    return {"kwh": _kwh(get_state(printer.energy)), "price_per_kwh": _price(get_state, price)}
+    return {"kwh": meter_kwh(get_state(printer.energy)), "cost": None if cost is None else round(cost, 4)}
 
 
-def _kwh(state: State | None) -> float | None:
+def meter_kwh(state: State | None) -> float | None:
+    """An energy meter's reading in kWh, converted from Wh or MWh."""
     if state is None or state.state in _MISSING:
         return None
     try:
@@ -133,10 +138,8 @@ def _kwh(state: State | None) -> float | None:
     return round(reading * factor, 3)
 
 
-def _price(get_state: StateGetter, price: Price | None) -> float | None:
-    """Euros per kWh; a sensor in cents per kWh is converted."""
-    if price is None:
-        return None
+def price_per_kwh(get_state: StateGetter, price: Price) -> float | None:
+    """Euros per kWh at this moment; a sensor in cents per kWh is converted."""
     if price.entity_id is not None:
         state = get_state(price.entity_id)
         if state is not None and state.state not in _MISSING:
@@ -146,7 +149,7 @@ def _price(get_state: StateGetter, price: Price | None) -> float | None:
                 value = None
             if value is not None:
                 unit = str(state.attributes.get("unit_of_measurement") or "").casefold()
-                return round(value / 100 if unit.startswith(("ct", "cent", "c/")) else value, 4)
+                return value / 100 if unit.startswith(("ct", "cent", "c/")) else value
     return price.per_kwh
 
 

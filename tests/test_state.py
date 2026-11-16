@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
 from homeassistant.core import HomeAssistant
 
 from custom_components.bambu_printer_webhook.const import VERSION
 from custom_components.bambu_printer_webhook.discovery import PrinterEntities, find_printers
-from custom_components.bambu_printer_webhook.state import Price, build_state
+from custom_components.bambu_printer_webhook.state import Price, build_state, price_per_kwh
 
 from .conftest import MODEL, SERIAL, BambuSetup, tray_attributes
 
@@ -185,21 +186,20 @@ async def test_a_type_the_bambu_lab_integration_does_not_know_is_sent_by_its_cod
     assert (tray["name"], tray["filament_id"]) == (None, "GFA19")
 
 
-async def test_the_plugs_meter_and_the_electricity_price_are_sent(hass: HomeAssistant) -> None:
+async def test_the_plugs_meter_and_what_it_cost_are_sent(hass: HomeAssistant) -> None:
     hass.states.async_set("sensor.plug_energy", "1234.6", {"unit_of_measurement": "Wh"})
-    hass.states.async_set("sensor.tariff", "28.5", {"unit_of_measurement": "ct/kWh"})
     printer = PrinterEntities(serial=SERIAL, model=MODEL, name="P1S", energy="sensor.plug_energy")
 
-    document = build_state(printer, hass.states.get, NOW, price=Price("sensor.tariff", 0.30))
+    document = build_state(printer, hass.states.get, NOW, energy_cost=12.345678)
 
-    assert document["energy"] == {"kwh": 1.235, "price_per_kwh": 0.285}
+    assert document["energy"] == {"kwh": 1.235, "cost": 12.3457}
 
 
-async def test_the_fixed_price_is_used_while_the_price_sensor_has_no_value(hass: HomeAssistant) -> None:
-    hass.states.async_set("sensor.plug_energy", "12.75", {"unit_of_measurement": "kWh"})
+async def test_a_price_sensor_in_cents_is_converted_and_the_fixed_price_covers_its_gaps(hass: HomeAssistant) -> None:
+    price = Price("sensor.tariff", 0.30)
+
+    hass.states.async_set("sensor.tariff", "37.37", {"unit_of_measurement": "ct/kWh"})
+    assert price_per_kwh(hass.states.get, price) == pytest.approx(0.3737)
+
     hass.states.async_set("sensor.tariff", "unavailable")
-    printer = PrinterEntities(serial=SERIAL, model=MODEL, name="P1S", energy="sensor.plug_energy")
-
-    document = build_state(printer, hass.states.get, NOW, price=Price("sensor.tariff", 0.30))
-
-    assert document["energy"] == {"kwh": 12.75, "price_per_kwh": 0.30}
+    assert price_per_kwh(hass.states.get, price) == 0.30

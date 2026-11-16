@@ -63,7 +63,7 @@
         },
         "data_description": {
           "interval": "How often the state is sent regardless of changes, in seconds.",
-          "price_entity": "A sensor with the price per kWh, for a dynamic tariff. In cents per kWh is converted.",
+          "price_entity": "A sensor with the all-in price per kWh (taxes included), for a dynamic tariff: each kWh is paid at the price of the moment it was used. In cents per kWh is converted.",
           "price_per_kwh": "Euros per kWh, used without a price sensor."
         }
       }
