@@ -194,6 +194,7 @@ Accept: application/json
 | `printer_serial` | The printer's serial number, as `printer.serial` in the state. |
 | `task_name` | The print's task name, as `print.task_name`. |
 | `start_time` | The print's start time, exactly as `print.start_time`: match on it with some margin, since it can shift once while a print is being prepared. |
+| `print_job_id` | Only for a 3mf the receiver asked for (see Requests): the id it gave, naming the print the file belongs to. |
 | `file` | The file. A cover image is the plate's PNG preview (`cover.png`), or a JPEG from Bambu's cloud (`cover.jpg`). A 3mf keeps the name it has in the Bambu Lab integration's cache. |
 
 Both come from the Bambu Lab integration, which downloads the 3mf of every
@@ -203,6 +204,28 @@ in its cache named after the task and cached at most 10 minutes before the
 print started; when there is none (no local access to the printer, or a file
 whose name doesn't match the task) no 3mf is sent. Files over 100 MB are not
 sent.
+
+## Requests
+
+The receiver can ask for something in its reply to a state: a JSON object
+with `requests`, a list. Each is handled once; a receiver that still lacks
+what it asked for asks again later. For now there is one kind:
+
+| Field | Meaning |
+|---|---|
+| `kind` | `print_files`: the 3mf of one of the receiver's prints. |
+| `print_job_id` | The receiver's id of the print, sent back with the file. |
+| `task_name` | The print's task name. |
+| `start_time` | When the print started, ISO 8601. |
+| `plate` | The plate it printed, or null. |
+| `weight_grams` | Its weight as the slicer gave it, or null. |
+
+The integration looks in the Bambu Lab integration's cache for the 3mf named
+after the task and cached closest to the start time, else, while the printer
+isn't printing, on the printer's storage for the 3mf of that name. It only
+sends a file whose plate and weight (within 5%) match the print, as a later
+file of the same name can be sliced otherwise, as a `model` with
+`print_job_id`. Nothing found, it lets it be until Home Assistant restarts.
 
 ## Stored prints
 

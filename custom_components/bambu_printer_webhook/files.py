@@ -54,6 +54,32 @@ def file_key(filename: str) -> str:
     return task_key(_SIZE_PREFIX.sub("", filename, count=1))
 
 
+def find_model_file_of(directories: list[Path], task_name: str, started: datetime) -> ModelFile | None:
+    """The cached 3mf named after ``task_name`` cached closest to when a
+    finished print started, for a file asked for afterwards: a later print
+    of the same name may have cached another version since. Blocking: run
+    it in the executor."""
+    wanted = task_key(task_name)
+    not_before = started - MODEL_FRESHNESS
+    closest: ModelFile | None = None
+
+    for directory in directories:
+        prints = directory / "prints"
+        if not prints.is_dir():
+            continue
+        for path in prints.rglob("*.3mf"):
+            if file_key(path.name) != wanted:
+                continue
+            stat = path.stat()
+            modified = datetime.fromtimestamp(stat.st_mtime, tz=started.tzinfo)
+            if modified < not_before:
+                continue
+            if closest is None or abs(modified - started) < abs(closest.modified - started):
+                closest = ModelFile(path, stat.st_size, modified)
+
+    return closest
+
+
 def find_model_file(directories: list[Path], task_name: str, started: datetime) -> ModelFile | None:
     """The newest cached 3mf named after ``task_name`` and cached for this print.
 

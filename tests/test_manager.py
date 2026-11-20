@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import io
 import os
+import zipfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -621,3 +623,63 @@ async def test_without_a_local_address_the_storage_is_left_alone(
     await hass.async_block_till_done(wait_background_tasks=True)
 
     assert storage.opened == []
+
+
+_REQUEST = {
+    "kind": "print_files",
+    "print_job_id": 582,
+    "task_name": "Christmas Moose",
+    "start_time": "2026-10-26T08:17:00+00:00",
+    "plate": None,
+    "weight_grams": None,
+}
+
+
+async def test_a_3mf_asked_for_in_the_reply_is_sent_once_from_the_cache_closest_to_its_print(
+    hass: HomeAssistant, bambu: BambuSetup, aioclient_mock: AiohttpClientMocker, freezer, tmp_path
+) -> None:
+    hass.config.config_dir = str(tmp_path)
+    _set_print(hass, bambu, "finish")
+    _cache_model(hass, "100-Christmas Moose.gcode.3mf", "2026-10-26T08:18:00+00:00")
+    _cache_model(hass, "200-Christmas Moose.gcode.3mf", "2026-11-01T09:00:00+00:00")
+    aioclient_mock.post(URL, json={"ok": True, "requests": [_REQUEST]})
+    await _set_up(hass)
+
+    await _tick(hass, freezer, 31)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    await _tick(hass, freezer, 301)
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    models = [
+        _form(call[2])
+        for call in aioclient_mock.mock_calls
+        if isinstance(call[2], FormData) and _form(call[2])["kind"] == "model"
+    ]
+    assert len(models) == 1, "asked for again, but it was answered"
+    assert models[0]["print_job_id"] == "582"
+    assert models[0]["file"][0] == "100-Christmas Moose.gcode.3mf"
+
+
+async def test_a_3mf_of_another_weight_than_the_print_asked_for_is_not_sent(
+    hass: HomeAssistant, bambu: BambuSetup, aioclient_mock: AiohttpClientMocker, freezer, tmp_path
+) -> None:
+    hass.config.config_dir = str(tmp_path)
+    _set_print(hass, bambu, "finish")
+    path = _cache_model(hass, "100-Christmas Moose.gcode.3mf", "2026-10-26T08:18:00+00:00")
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            "Metadata/slice_info.config",
+            '<config><plate><metadata key="index" value="1"/><metadata key="weight" value="211.77"/></plate></config>',
+        )
+        archive.writestr("Metadata/plate_1.gcode", "G28")
+    path.write_bytes(buffer.getvalue())
+    aioclient_mock.post(URL, json={"ok": True, "requests": [{**_REQUEST, "plate": 1, "weight_grams": 106}]})
+    await _set_up(hass)
+
+    await _tick(hass, freezer, 31)
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert not any(
+        isinstance(call[2], FormData) and _form(call[2])["kind"] == "model" for call in aioclient_mock.mock_calls
+    )
