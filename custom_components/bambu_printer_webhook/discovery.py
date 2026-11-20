@@ -52,6 +52,8 @@ class PrinterEntities:
     cover_image: str | None = None
     ams: list[AmsEntities] = field(default_factory=list)
     external_spool: str | None = None
+    energy: str | None = None
+    """The energy meter (kWh) of the printer's plug, chosen in the options."""
 
     @property
     def entity_ids(self) -> set[str]:

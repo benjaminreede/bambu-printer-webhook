@@ -10,6 +10,9 @@ from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResu
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
+    DateSelector,
+    EntitySelector,
+    EntitySelectorConfig,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -20,9 +23,14 @@ from homeassistant.helpers.selector import (
 from yarl import URL
 
 from .const import (
+    CONF_ENERGY_SENSORS,
+    CONF_HISTORY_SINCE,
     CONF_INTERVAL,
+    CONF_PRICE_ENTITY,
+    CONF_PRICE_PER_KWH,
     CONF_TOKEN,
     CONF_WEBHOOK_URL,
+    DEFAULT_HISTORY_SINCE,
     DEFAULT_INTERVAL_SECONDS,
     DOMAIN,
     MAX_INTERVAL_SECONDS,
@@ -31,6 +39,7 @@ from .const import (
     REQUEST_TIMEOUT_SECONDS,
     SCHEMA_VERSION,
 )
+from .discovery import find_printers
 
 
 def _schema(defaults: dict[str, Any]) -> vol.Schema:
@@ -134,28 +143,70 @@ class BambuPrinterWebhookConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class BambuPrinterWebhookOptionsFlow(OptionsFlow):
-    """How often minor changes are sent."""
+    """How often minor changes are sent, and each printer's energy meter and
+    the electricity price, so the receiver can work out what a print cost."""
+
+    def __init__(self) -> None:
+        self._meter_fields: dict[str, str] = {}
+        """Field name to printer serial; the fields are named after the printers."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        options = self.config_entry.options
         if user_input is not None:
-            return self.async_create_entry(data={CONF_INTERVAL: int(user_input[CONF_INTERVAL])})
-
-        return self.async_show_form(
-            step_id="init",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        CONF_INTERVAL,
-                        default=self.config_entry.options.get(CONF_INTERVAL, DEFAULT_INTERVAL_SECONDS),
-                    ): NumberSelector(
-                        NumberSelectorConfig(
-                            min=MIN_INTERVAL_SECONDS,
-                            max=MAX_INTERVAL_SECONDS,
-                            step=1,
-                            unit_of_measurement="s",
-                            mode=NumberSelectorMode.BOX,
-                        )
-                    ),
+            price = user_input.get(CONF_PRICE_PER_KWH)
+            return self.async_create_entry(
+                data={
+                    CONF_INTERVAL: int(user_input[CONF_INTERVAL]),
+                    CONF_ENERGY_SENSORS: {
+                        serial: user_input[field]
+                        for field, serial in self._meter_fields.items()
+                        if user_input.get(field)
+                    },
+                    CONF_PRICE_ENTITY: user_input.get(CONF_PRICE_ENTITY) or None,
+                    CONF_PRICE_PER_KWH: float(price) if price not in (None, "") else None,
+                    CONF_HISTORY_SINCE: user_input.get(CONF_HISTORY_SINCE) or None,
                 }
+            )
+
+        meters = options.get(CONF_ENERGY_SENSORS, {})
+        schema: dict[Any, Any] = {
+            vol.Required(CONF_INTERVAL, default=options.get(CONF_INTERVAL, DEFAULT_INTERVAL_SECONDS)): NumberSelector(
+                NumberSelectorConfig(
+                    min=MIN_INTERVAL_SECONDS,
+                    max=MAX_INTERVAL_SECONDS,
+                    step=1,
+                    unit_of_measurement="s",
+                    mode=NumberSelectorMode.BOX,
+                )
             ),
+        }
+
+        self._meter_fields = {}
+        for printer in sorted(find_printers(self.hass), key=lambda printer: printer.name or printer.serial):
+            field = f"kWh-meter {printer.name or printer.serial}"
+            if field in self._meter_fields:
+                field = f"{field} ({printer.serial})"
+            self._meter_fields[field] = printer.serial
+            schema[vol.Optional(field, description={"suggested_value": meters.get(printer.serial)})] = EntitySelector(
+                EntitySelectorConfig(domain="sensor", device_class="energy")
+            )
+
+        schema[vol.Optional(CONF_PRICE_ENTITY, description={"suggested_value": options.get(CONF_PRICE_ENTITY)})] = (
+            EntitySelector(EntitySelectorConfig(domain="sensor"))
         )
+        schema[vol.Optional(CONF_PRICE_PER_KWH, description={"suggested_value": options.get(CONF_PRICE_PER_KWH)})] = (
+            NumberSelector(
+                NumberSelectorConfig(
+                    min=0, max=10, step="any", unit_of_measurement="€/kWh", mode=NumberSelectorMode.BOX
+                )
+            )
+        )
+
+        schema[
+            vol.Optional(
+                CONF_HISTORY_SINCE,
+                description={"suggested_value": options.get(CONF_HISTORY_SINCE, DEFAULT_HISTORY_SINCE)},
+            )
+        ] = DateSelector()
+
+        return self.async_show_form(step_id="init", data_schema=vol.Schema(schema))

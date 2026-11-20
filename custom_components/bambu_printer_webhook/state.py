@@ -7,6 +7,7 @@ whole document can be tested from a fixed set of states.
 from __future__ import annotations
 
 from collections.abc import Callable, Collection, Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -22,6 +23,19 @@ StateGetter = Callable[[str], State | None]
 SettledTray = tuple[int, int, str]
 """An AMS slot that finished reading a spool: (AMS index, slot, tray uuid)."""
 
+
+@dataclass(frozen=True)
+class Price:
+    """The electricity price: a sensor's state when it has one, else the fixed price."""
+
+    entity_id: str | None = None
+    per_kwh: float | None = None
+
+    @property
+    def configured(self) -> bool:
+        return self.entity_id is not None or self.per_kwh is not None
+
+
 _MISSING = {None, "", STATE_UNKNOWN, STATE_UNAVAILABLE, "none"}
 _NO_RFID = {"0" * 32, "0" * 16}
 
@@ -31,11 +45,13 @@ def build_state(
     get_state: StateGetter,
     now: datetime,
     settled: Collection[SettledTray] = (),
+    energy_cost: float | None = None,
 ) -> dict[str, Any]:
     """The full state of one printer, as sent to the webhook.
 
     ``settled`` holds the slots the AMS was seen reading a spool in, with
-    the spool it read; see PrinterSender.
+    the spool it read; see PrinterSender. ``energy_cost`` is what the
+    printer's plug has cost so far; see EnergyCosts.
     """
     status = _status(printer, get_state)
 
@@ -51,6 +67,7 @@ def build_state(
         "print": _print(printer, get_state),
         "ams": [_ams(unit, get_state, settled) for unit in printer.ams],
         "external_spool": _external_spool(printer, get_state),
+        "energy": _energy(printer, get_state, energy_cost),
     }
 
 
@@ -98,6 +115,42 @@ def _print(printer: PrinterEntities, get_state: StateGetter) -> dict[str, Any] |
     if document["task_name"] is None and document["progress_percent"] is None and document["start_time"] is None:
         return None
     return document
+
+
+def _energy(printer: PrinterEntities, get_state: StateGetter, cost: float | None) -> dict[str, Any] | None:
+    """The plug's meter reading in kWh and what it has cost so far, when
+    the printer has a meter."""
+    if printer.energy is None:
+        return None
+    return {"kwh": meter_kwh(get_state(printer.energy)), "cost": None if cost is None else round(cost, 4)}
+
+
+def meter_kwh(state: State | None) -> float | None:
+    """An energy meter's reading in kWh, converted from Wh or MWh."""
+    if state is None or state.state in _MISSING:
+        return None
+    try:
+        reading = float(state.state)
+    except ValueError:
+        return None
+    unit = str(state.attributes.get("unit_of_measurement") or "kWh")
+    factor = {"Wh": 0.001, "MWh": 1000.0}.get(unit, 1.0)
+    return round(reading * factor, 3)
+
+
+def price_per_kwh(get_state: StateGetter, price: Price) -> float | None:
+    """Euros per kWh at this moment; a sensor in cents per kWh is converted."""
+    if price.entity_id is not None:
+        state = get_state(price.entity_id)
+        if state is not None and state.state not in _MISSING:
+            try:
+                value = float(state.state)
+            except ValueError:
+                value = None
+            if value is not None:
+                unit = str(state.attributes.get("unit_of_measurement") or "").casefold()
+                return value / 100 if unit.startswith(("ct", "cent", "c/")) else value
+    return price.per_kwh
 
 
 def _ams(unit: AmsEntities, get_state: StateGetter, settled: Collection[SettledTray]) -> dict[str, Any]:

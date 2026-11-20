@@ -98,7 +98,8 @@ can arrive more than once.
       ]
     }
   ],
-  "external_spool": null
+  "external_spool": null,
+  "energy": { "kwh": 1284.317, "cost": 312.4471 }
 }
 ```
 
@@ -144,6 +145,9 @@ can arrive more than once.
 | `trays[].remain` | integer | Remaining filament in percent, `-1` when the printer has not measured it (yet). |
 | `trays[].settled` | boolean | `true` when the integration saw the AMS read this spool in this slot (see When it is sent): its identity and percentage are final. Always `false` for the external spool, and `false` after Home Assistant restarts until the AMS reads the slot again. Added in 0.4.0. |
 | `external_spool` | tray or null | The external spool holder, in the same shape as a tray (without `slot`), or `null` when the printer has none. A printer with two holders (one per nozzle) reports the first. |
+| `energy` | object or null | The printer's plug, when an energy meter was chosen for it in the options; `null` otherwise. Added in 0.6.0. |
+| `energy.kwh` | number or null | The meter's reading in kWh (converted from Wh or MWh), a running total: what a print used is the reading at its end minus the one at its start. `null` when the meter has no value. |
+| `energy.cost` | number or null | What the plug has cost in euros since its meter was chosen, a running total like `kwh`: what a print cost is the total at its end minus the one at its start. Each new meter reading is paid at the price of that moment, from the price sensor chosen in the options (converted from cents) or the fixed price when there is no sensor or it has no value, so a dynamic tariff is followed per quarter of an hour. While neither has a value, what is used waits to be paid at the next known price. Kept across restarts; a meter that goes back starts over from its new reading without cost. `null` when no price is set. |
 
 ## Response
 
@@ -186,10 +190,11 @@ Accept: application/json
 | Field | Meaning |
 |---|---|
 | `schema_version` | Always `1`. |
-| `kind` | `cover_image` or `model`. |
+| `kind` | `cover_image` or `model`. A stored print is `history` (see Stored prints). |
 | `printer_serial` | The printer's serial number, as `printer.serial` in the state. |
 | `task_name` | The print's task name, as `print.task_name`. |
 | `start_time` | The print's start time, exactly as `print.start_time`: match on it with some margin, since it can shift once while a print is being prepared. |
+| `print_job_id` | Only for a 3mf the receiver asked for (see Requests): the id it gave, naming the print the file belongs to. |
 | `file` | The file. A cover image is the plate's PNG preview (`cover.png`), or a JPEG from Bambu's cloud (`cover.jpg`). A 3mf keeps the name it has in the Bambu Lab integration's cache. |
 
 Both come from the Bambu Lab integration, which downloads the 3mf of every
@@ -200,5 +205,68 @@ print started; when there is none (no local access to the printer, or a file
 whose name doesn't match the task) no 3mf is sent. Files over 100 MB are not
 sent.
 
-A receiver tells the two kinds of request apart by their content type: JSON
-is a state, a multipart form is a file.
+## Requests
+
+The receiver can ask for something in its reply to a state: a JSON object
+with `requests`, a list. Each is handled once; a receiver that still lacks
+what it asked for asks again later. For now there is one kind:
+
+| Field | Meaning |
+|---|---|
+| `kind` | `print_files`: the 3mf of one of the receiver's prints. |
+| `print_job_id` | The receiver's id of the print, sent back with the file. |
+| `task_name` | The print's task name. |
+| `start_time` | When the print started, ISO 8601. |
+| `plate` | The plate it printed, or null. |
+| `weight_grams` | Its weight as the slicer gave it, or null. |
+
+The integration looks in the Bambu Lab integration's cache for the 3mf named
+after the task and cached closest to the start time, else, while the printer
+isn't printing, on the printer's storage for the 3mf of that name. It only
+sends a file whose plate and weight (within 5%) match the print, as a later
+file of the same name can be sliced otherwise, as a `model` with
+`print_job_id`. Nothing found, it lets it be until Home Assistant restarts.
+
+## Stored prints
+
+Once per printer, the integration also sends every print the printer still
+has on its storage (SD card or USB stick), so a receiver can add the prints
+from before the integration was set up. Only files written since the day set
+under **Configure** are sent (1 September 2026 unless changed; empty means
+all). Each print goes out as its own multipart request to the same URL,
+oldest first, after a delivered state of that printer.
+
+A printer keeps, per project, the 3mf last sent to it (holding the one plate
+it was sent for) and, per plate it printed, that plate's G-code named
+`<project>_plate_<n>.gcode`. Sending a project again overwrites both. So a
+print is each 3mf, and each G-code of another plate of a project whose 3mf is
+next to it; the G-code of the plate in the 3mf (written within the hour after
+it) is that same print. A G-code whose name matches no 3mf (the printer cuts
+names off at their first dot) is left out.
+
+The storage is read over the printer's local FTPS with the address and access
+code from the Bambu Lab integration; without them (a printer set up through
+the cloud only) nothing is sent. It is only read while the printer isn't
+printing; when a print starts, or a request is refused or fails, the import
+stops and goes on from where it was after a later state. Once every stored
+print was delivered, the import is done for that printer and doesn't run
+again.
+
+| Field | Meaning |
+|---|---|
+| `schema_version` | Always `1`. |
+| `kind` | `history`. |
+| `printer_serial` | The printer's serial number, as `printer.serial` in the state. |
+| `task_name` | The project's name: the 3mf's name without folder and `.gcode.3mf`, as a printer names its print. The same for every plate of the project. |
+| `file_name` | The file's path on the storage, e.g. `/cache/Benchy.gcode.3mf` or `/cache/Benchy_plate_2.gcode`. With `printer_serial` it identifies the print across imports. |
+| `modified` | When the file was last written (sent to the printer, or for a plate's G-code when it started printing), ISO 8601 with its offset, or empty when the printer didn't say. Only a date (`2026-03-02`) when the printer gave no more than the day, as it does for a file older than about half a year. Times the printer lists the way `ls -l` does are its local time, taken to be Home Assistant's. Sending the same file again overwrites it, so a print repeated from the same file shows only its last time. |
+| `weight_grams` | The estimated filament weight of the plate, or empty: from the 3mf's slice info, or from a G-code's header. |
+| `print_seconds` | The estimated print time of that plate in seconds, or empty. |
+| `plate` | Which plate of the project this is, or empty: the plate whose G-code the 3mf holds, or the number in a G-code's name. The plates of one project share its name, so this is what tells them apart. |
+| `plate_objects` | How many objects stand on the plate, or empty: from the 3mf's slice info (skipped objects left out), or one per label id in a G-code's header. |
+| `file` | The plate's picture (`plate.png`), from the 3mf or the largest one in a G-code's header. Optional. |
+
+The storage says nothing about whether a print succeeded.
+
+A receiver tells the kinds of request apart by their content type: JSON is a
+state, a multipart form is a file or a stored print, told apart by `kind`.
