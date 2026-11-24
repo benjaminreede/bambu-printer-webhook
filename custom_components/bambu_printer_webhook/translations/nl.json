@@ -66,7 +66,7 @@
           "interval": "Hoe vaak de stand hoe dan ook verstuurd wordt, in seconden.",
           "price_entity": "Een sensor met de all-in prijs per kWh (inclusief belastingen), voor een dynamisch tarief: elke kWh wordt afgerekend tegen de prijs van het moment waarop hij verbruikt is. In cent per kWh wordt omgerekend.",
           "price_per_kwh": "Euro per kWh, als er geen prijssensor is.",
-          "history_since": "Eenmalig worden de prints die nog op de opslag van elke printer staan naar de site gestuurd, vanaf deze dag. Wat eerder geprint is, blijft weg; leeg betekent alles. Aanpassen heeft geen effect meer zodra de import gedraaid heeft."
+          "history_since": "Vul een dag in om de prints die nog op de opslag van elke printer staan eenmalig naar de site te sturen, vanaf die dag. Leeg: er wordt niets geïmporteerd. De dag aanpassen heeft geen effect meer zodra de import gedraaid heeft."
         }
       }
     }

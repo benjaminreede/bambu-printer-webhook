@@ -229,11 +229,10 @@ file of the same name can be sliced otherwise, as a `model` with
 
 ## Stored prints
 
-Once per printer, the integration also sends every print the printer still
-has on its storage (SD card or USB stick), so a receiver can add the prints
-from before the integration was set up. Only files written since the day set
-under **Configure** are sent (1 September 2026 unless changed; empty means
-all). Each print goes out as its own multipart request to the same URL,
+Once per printer, the integration can also send every print the printer
+still has on its storage (SD card or USB stick), so a receiver can add the
+prints from before the integration was set up. It does so only once a day is
+set under **Configure**, and sends only files written since that day. Each print goes out as its own multipart request to the same URL,
 oldest first, after a delivered state of that printer.
 
 A printer keeps, per project, the 3mf last sent to it (holding the one plate

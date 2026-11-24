@@ -557,6 +557,7 @@ class PrinterSender:
     def _may_import(self, document: dict[str, Any]) -> bool:
         return (
             self._history is not None
+            and self._history_since is not None
             and not self._importing
             and not self._history.done(self.printer.serial)
             and document["online"]

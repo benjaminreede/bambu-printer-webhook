@@ -30,7 +30,6 @@ from .const import (
     CONF_PRICE_PER_KWH,
     CONF_TOKEN,
     CONF_WEBHOOK_URL,
-    DEFAULT_HISTORY_SINCE,
     DEFAULT_INTERVAL_SECONDS,
     DOMAIN,
     MAX_INTERVAL_SECONDS,
@@ -205,7 +204,7 @@ class BambuPrinterWebhookOptionsFlow(OptionsFlow):
         schema[
             vol.Optional(
                 CONF_HISTORY_SINCE,
-                description={"suggested_value": options.get(CONF_HISTORY_SINCE, DEFAULT_HISTORY_SINCE)},
+                description={"suggested_value": options.get(CONF_HISTORY_SINCE)},
             )
         ] = DateSelector()
 

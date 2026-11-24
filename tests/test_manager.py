@@ -26,8 +26,10 @@ from .conftest import SERIAL, BambuSetup, tray_attributes
 URL = "https://example.test/printer-state"
 
 
-async def _set_up(hass: HomeAssistant) -> MockConfigEntry:
-    entry = MockConfigEntry(domain=DOMAIN, data={"webhook_url": URL, "token": "secret"}, unique_id=URL)
+async def _set_up(hass: HomeAssistant, options: dict[str, object] | None = None) -> MockConfigEntry:
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={"webhook_url": URL, "token": "secret"}, unique_id=URL, options=options or {}
+    )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
@@ -571,7 +573,7 @@ async def test_the_prints_on_the_printers_storage_are_sent_once(
     hass.config_entries.async_update_entry(bambu.entry, options={"host": "192.168.1.50", "access_code": "12345678"})
     hass.states.async_set(bambu.entity_ids["print_status"], "idle")
     hass.states.async_set(bambu.entity_ids["online"], "on")
-    await _set_up(hass)
+    await _set_up(hass, {"history_since": "2026-09-01"})
 
     await _tick(hass, freezer, 31)
     await hass.async_block_till_done(wait_background_tasks=True)
@@ -604,7 +606,7 @@ async def test_the_storage_is_not_read_while_the_printer_prints(
     hass.config_entries.async_update_entry(bambu.entry, options={"host": "192.168.1.50", "access_code": "12345678"})
     hass.states.async_set(bambu.entity_ids["print_status"], "running")
     hass.states.async_set(bambu.entity_ids["online"], "on")
-    await _set_up(hass)
+    await _set_up(hass, {"history_since": "2026-09-01"})
 
     await _tick(hass, freezer, 31)
     await hass.async_block_till_done(wait_background_tasks=True)
@@ -612,12 +614,27 @@ async def test_the_storage_is_not_read_while_the_printer_prints(
     assert storage.opened == []
 
 
+async def test_without_a_day_to_import_from_the_storage_is_left_alone(
+    hass: HomeAssistant, bambu: BambuSetup, webhook: AiohttpClientMocker, freezer, storage
+) -> None:
+    hass.config_entries.async_update_entry(bambu.entry, options={"host": "192.168.1.50", "access_code": "12345678"})
+    hass.states.async_set(bambu.entity_ids["print_status"], "idle")
+    hass.states.async_set(bambu.entity_ids["online"], "on")
+    await _set_up(hass)
+
+    await _tick(hass, freezer, 31)
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert storage.opened == []
+    assert _history_posts(webhook) == []
+
+
 async def test_without_a_local_address_the_storage_is_left_alone(
     hass: HomeAssistant, bambu: BambuSetup, webhook: AiohttpClientMocker, freezer, storage
 ) -> None:
     hass.states.async_set(bambu.entity_ids["print_status"], "idle")
     hass.states.async_set(bambu.entity_ids["online"], "on")
-    await _set_up(hass)
+    await _set_up(hass, {"history_since": "2026-09-01"})
 
     await _tick(hass, freezer, 31)
     await hass.async_block_till_done(wait_background_tasks=True)
