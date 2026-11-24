@@ -74,9 +74,10 @@ FILE_STATUSES: Final = frozenset({"running", "pause"})
 FILE_COVER_IMAGE: Final = "cover_image"
 FILE_MODEL: Final = "model"
 FILE_HISTORY: Final = "history"
+"""A print found on the printer's storage, with the picture of its plate."""
+
 REQUEST_PRINT_FILES: Final = "print_files"
 """A receiver asking, in its reply to a state, for the 3mf of one of its prints."""
-"""A print found on the printer's storage, with the picture of its plate."""
 
 PRINT_STATUSES: Final = frozenset(
     {"idle", "init", "prepare", "slicing", "running", "pause", "finish", "failed", "offline", "unknown"}
@@ -92,6 +93,8 @@ PRINTER_SENSOR_KEYS: Final = {
     "end_time": "end_time",
     "weight_grams": "print_weight",
     "stage": "stage",
+    "objects": "printable_objects",
+    "skipped_objects": "skipped_objects",
 }
 """Schema field to ha-bambulab entity key, found by unique id ``{serial}_{key}``."""
 

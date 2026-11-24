@@ -72,7 +72,9 @@ can arrive more than once.
     "total_layers": 614,
     "start_time": "2026-10-26T08:17:45+00:00",
     "end_time": "2026-10-26T12:02:00+00:00",
-    "weight_grams": 38
+    "weight_grams": 38,
+    "objects": 4,
+    "skipped_objects": [47]
   },
   "ams": [
     {
@@ -126,7 +128,9 @@ can arrive more than once.
 | `print.current_layer` / `print.total_layers` | integer or null | |
 | `print.start_time` | ISO 8601 or null | When the printer says the print started. It can shift once while a print is being prepared, so it is **not** an identity. |
 | `print.end_time` | ISO 8601 or null | The printer's estimated (while running) or actual (once finished) end time. |
-| `print.weight_grams` | number or null | The print's total filament weight according to the slicer. |
+| `print.weight_grams` | number or null | The print's total filament weight according to the slicer: the whole plate, objects skipped while printing included. For a print started through Bambu's cloud it can be an earlier print's weight, as ha-bambulab then takes it from the latest cloud task; the print's own 3mf (see [Print files](#print-files)) has the plate's weight in its G-code. |
+| `print.objects` | integer or null | How many objects stand on the plate being printed. Added in 0.6.0. |
+| `print.skipped_objects` | array of integers or null | The objects skipped on the printer so far, by the label ids the plate's G-code gives them (`; model label id:` in its header, and the `identify_id` of each object in the 3mf's slice info); empty when none was skipped, `null` when the Bambu Lab integration has no sensor for it. Added in 0.6.0. |
 | `ams` | array | One entry per AMS unit, possibly empty. |
 | `ams[].index` | integer | The AMS number as the printer gives it: 1 for the first AMS, 2 for the second, and so on; an AMS HT counts from 128. |
 | `ams[].humidity` | integer or null | Relative humidity in percent, on AMS units that measure it. |

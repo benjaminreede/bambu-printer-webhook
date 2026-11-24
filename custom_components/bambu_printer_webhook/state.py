@@ -110,11 +110,28 @@ def _print(printer: PrinterEntities, get_state: StateGetter) -> dict[str, Any] |
         "start_time": _timestamp(sensor("start_time")),
         "end_time": _timestamp(sensor("end_time")),
         "weight_grams": _number(sensor("weight_grams")),
+        "objects": _int(sensor("objects")),
+        "skipped_objects": _skipped_objects(get_state, printer.sensors.get("skipped_objects")),
     }
 
     if document["task_name"] is None and document["progress_percent"] is None and document["start_time"] is None:
         return None
     return document
+
+
+def _skipped_objects(get_state: StateGetter, entity_id: str | None) -> list[int] | None:
+    """The ids of the objects skipped on the plate, as its G-code labels
+    them; ``None`` when ha-bambulab has no sensor for them."""
+    state = get_state(entity_id) if entity_id else None
+    if state is None or state.state in _MISSING:
+        return None
+    ids = []
+    for value in state.attributes.get("objects") or []:
+        try:
+            ids.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    return sorted(ids)
 
 
 def _energy(printer: PrinterEntities, get_state: StateGetter, cost: float | None) -> dict[str, Any] | None:
