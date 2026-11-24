@@ -27,14 +27,13 @@ While a print runs, its cover image and 3mf file follow to the same URL as a
 multipart form, once per print. They come from the Bambu Lab integration's own
 cover image and file cache.
 
-Once per printer, the prints still on its storage are sent too, so the
-receiver can add the prints from before the integration was set up. For that
-the integration reads the printer's storage over its local FTPS, with the
-address and access code from the Bambu Lab integration, and only while it
-isn't printing. Nothing on the printer is changed. Only prints from the day
-set under **Configure** on are sent (1 September 2026 unless changed); set it
-before the integration first starts if you want another day, since the import
-runs only once.
+The prints still on a printer's storage can be sent once too, so the receiver
+can add the prints from before the integration was set up. Nothing is
+imported until you fill in, under **Configure**, the day from which prints
+are sent; the import then runs once per printer. For that the integration
+reads the printer's storage over its local FTPS, with the address and access
+code from the Bambu Lab integration, and only while it isn't printing.
+Nothing on the printer is changed.
 
 When a printer's plug has an energy meter, choose it per printer under
 **Configure**, with the electricity price (a sensor with your tariff, or a

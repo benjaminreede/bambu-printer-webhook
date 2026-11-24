@@ -66,7 +66,7 @@
           "interval": "How often the state is sent regardless of changes, in seconds.",
           "price_entity": "A sensor with the all-in price per kWh (taxes included), for a dynamic tariff: each kWh is paid at the price of the moment it was used. In cents per kWh is converted.",
           "price_per_kwh": "Euros per kWh, used without a price sensor.",
-          "history_since": "Once, the prints still on each printer's storage are sent to the site, from this day on. Anything printed earlier is left out; empty means everything. Changing it has no effect once the import has run."
+          "history_since": "Fill in a day to send the prints still on each printer's storage to the site, once, from that day on. Empty: nothing is imported. Changing the day has no effect once the import has run."
         }
       }
     }
