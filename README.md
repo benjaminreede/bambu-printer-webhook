@@ -24,8 +24,29 @@ One JSON document per printer with its complete state, described in
 - once, 30 seconds after Home Assistant starts.
 
 While a print runs, its cover image and 3mf file follow to the same URL as a
-multipart form, once per print. They come from the Bambu Lab integration's own
-cover image and file cache; this integration never connects to the printer.
+multipart form, once per print. The cover comes from the Bambu Lab
+integration. The 3mf is read from the printer's own storage over its local
+FTPS, with the address and access code from the Bambu Lab integration: the
+file of the print's name with the number of layers the printer reports, so
+always the file it prints from. Without local access, it comes from the Bambu
+Lab integration's file cache, and only when its layers match.
+
+Every minute, the integration asks the receiver whether it wants anything of
+the printers: the 3mf of an earlier print, or the prints still on a printer's
+storage from a given day on (so the receiver can add the prints from before
+the integration was set up). The storage is only read for that while the
+printer isn't printing, and nothing on the printer is changed.
+
+A printer without a local address and access code in the Bambu Lab
+integration, or whose storage couldn't be read, shows under **Settings →
+Repairs** until it is fixed.
+
+When a printer's plug has an energy meter, choose it per printer under
+**Configure**, with the electricity price (a sensor with your tariff, or a
+fixed price): the state then carries the meter's reading and what the plug has
+cost so far, each kWh paid at the price of the moment it was used, so the
+receiver can work out what a print cost in electricity, with a dynamic tariff
+too.
 
 Each request is a `POST` with the token as a bearer token in the
 `Authorization` header. A failed request is logged and not retried: the next

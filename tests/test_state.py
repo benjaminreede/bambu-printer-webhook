@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
 from homeassistant.core import HomeAssistant
 
 from custom_components.bambu_printer_webhook.const import VERSION
-from custom_components.bambu_printer_webhook.discovery import find_printers
-from custom_components.bambu_printer_webhook.state import build_state
+from custom_components.bambu_printer_webhook.discovery import PrinterEntities, find_printers
+from custom_components.bambu_printer_webhook.state import Price, build_state, price_per_kwh
 
 from .conftest import MODEL, SERIAL, BambuSetup, tray_attributes
 
@@ -26,6 +27,9 @@ def _set_printing(bambu: BambuSetup) -> None:
     states.async_set(ids["start_time"], "2026-10-26T08:17:45+00:00")
     states.async_set(ids["end_time"], "2026-10-26T12:02:00+00:00")
     states.async_set(ids["print_weight"], "38.0")
+    objects = {"8": "Rendier", "47": "Rendier", "58": "Rendier", "69": "Rendier"}
+    states.async_set(ids["printable_objects"], "4", {"objects": objects})
+    states.async_set(ids["skipped_objects"], "2", {"objects": [58, 47]})
     states.async_set(ids["online"], "on")
     states.async_set(ids["stage"], "printing")
     states.async_set(ids["print_error"], "off")
@@ -66,6 +70,8 @@ async def test_builds_the_full_state_of_a_printing_printer(hass: HomeAssistant, 
             "start_time": "2026-10-26T08:17:45+00:00",
             "end_time": "2026-10-26T12:02:00+00:00",
             "weight_grams": 38,
+            "objects": 4,
+            "skipped_objects": [47, 58],
         },
         "ams": [
             {
@@ -107,6 +113,7 @@ async def test_builds_the_full_state_of_a_printing_printer(hass: HomeAssistant, 
             }
         ],
         "external_spool": {"empty": True, "active": False, "settled": False},
+        "energy": None,
     }
 
 
@@ -182,3 +189,22 @@ async def test_a_type_the_bambu_lab_integration_does_not_know_is_sent_by_its_cod
     tray = build_state(printer, hass.states.get, NOW)["ams"][0]["trays"][0]
 
     assert (tray["name"], tray["filament_id"]) == (None, "GFA19")
+
+
+async def test_the_plugs_meter_and_what_it_cost_are_sent(hass: HomeAssistant) -> None:
+    hass.states.async_set("sensor.plug_energy", "1234.6", {"unit_of_measurement": "Wh"})
+    printer = PrinterEntities(serial=SERIAL, model=MODEL, name="P1S", energy="sensor.plug_energy")
+
+    document = build_state(printer, hass.states.get, NOW, energy_cost=12.345678)
+
+    assert document["energy"] == {"kwh": 1.235, "cost": 12.3457}
+
+
+async def test_a_price_sensor_in_cents_is_converted_and_the_fixed_price_covers_its_gaps(hass: HomeAssistant) -> None:
+    price = Price("sensor.tariff", 0.30)
+
+    hass.states.async_set("sensor.tariff", "37.37", {"unit_of_measurement": "ct/kWh"})
+    assert price_per_kwh(hass.states.get, price) == pytest.approx(0.3737)
+
+    hass.states.async_set("sensor.tariff", "unavailable")
+    assert price_per_kwh(hass.states.get, price) == 0.30

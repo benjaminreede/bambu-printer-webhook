@@ -7,7 +7,7 @@ from typing import Final
 
 DOMAIN: Final = "bambu_printer_webhook"
 NAME: Final = "Bambu Printer Webhook"
-VERSION: Final = "0.5.0"
+VERSION: Final = "0.6.0"
 
 SCHEMA_VERSION: Final = 1
 
@@ -44,6 +44,14 @@ MAX_INTERVAL_SECONDS: Final = 3600
 """How often a printer's state is sent regardless of changes, and so how often
 minor changes (progress, layers, a spool's percentage) reach the webhook."""
 
+CONF_ENERGY_SENSORS: Final = "energy_sensors"
+"""Per printer serial, the entity id of the energy meter (kWh) of its plug."""
+
+CONF_PRICE_ENTITY: Final = "price_entity"
+CONF_PRICE_PER_KWH: Final = "price_per_kwh"
+"""The electricity price: a sensor (a dynamic tariff), else a fixed price."""
+
+
 STARTUP_DELAY: Final = timedelta(seconds=30)
 """How long after setup the first state is sent, so ha-bambulab has connected."""
 
@@ -63,6 +71,23 @@ FILE_STATUSES: Final = frozenset({"running", "pause"})
 
 FILE_COVER_IMAGE: Final = "cover_image"
 FILE_MODEL: Final = "model"
+FILE_HISTORY: Final = "history"
+"""A print found on the printer's storage, with the picture of its plate."""
+
+REQUEST_PRINT_FILES: Final = "print_files"
+"""A receiver asking for the 3mf of one of its prints."""
+
+REQUEST_STORED_PRINTS: Final = "stored_prints"
+"""A receiver asking for the prints on a printer's storage, from a day on."""
+
+SOURCE_PRINTER: Final = "printer"
+"""A 3mf read from the printer's own storage: the file it printed from."""
+
+SOURCE_CACHE: Final = "cache"
+"""A 3mf from ha-bambulab's cache, which can be an earlier print's of the same name."""
+
+POLL_INTERVAL: Final = timedelta(minutes=1)
+"""How often the receiver is asked whether it wants anything."""
 
 PRINT_STATUSES: Final = frozenset(
     {"idle", "init", "prepare", "slicing", "running", "pause", "finish", "failed", "offline", "unknown"}
@@ -78,6 +103,8 @@ PRINTER_SENSOR_KEYS: Final = {
     "end_time": "end_time",
     "weight_grams": "print_weight",
     "stage": "stage",
+    "objects": "printable_objects",
+    "skipped_objects": "skipped_objects",
 }
 """Schema field to ha-bambulab entity key, found by unique id ``{serial}_{key}``."""
 

@@ -8,8 +8,17 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_INTERVAL, CONF_TOKEN, CONF_WEBHOOK_URL, DEFAULT_INTERVAL_SECONDS
+from .const import (
+    CONF_ENERGY_SENSORS,
+    CONF_INTERVAL,
+    CONF_PRICE_ENTITY,
+    CONF_PRICE_PER_KWH,
+    CONF_TOKEN,
+    CONF_WEBHOOK_URL,
+    DEFAULT_INTERVAL_SECONDS,
+)
 from .manager import WebhookManager
+from .state import Price
 
 type BambuWebhookConfigEntry = ConfigEntry[WebhookManager]
 
@@ -24,6 +33,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: BambuWebhookConfigEntry)
         entry.data[CONF_TOKEN],
         entry.entry_id,
         timedelta(seconds=entry.options.get(CONF_INTERVAL, DEFAULT_INTERVAL_SECONDS)),
+        entry.options.get(CONF_ENERGY_SENSORS, {}),
+        Price(entry.options.get(CONF_PRICE_ENTITY), entry.options.get(CONF_PRICE_PER_KWH)),
     )
     await manager.async_load()
     manager.async_start()
