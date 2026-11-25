@@ -6,10 +6,12 @@ import base64
 import io
 import zipfile
 from datetime import UTC, datetime, timedelta
+from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
 from custom_components.bambu_printer_webhook.history import (
     StoredFile,
+    _ImplicitFTPS,
     parse_list_line,
     parse_mlsd_time,
     prints_in,
@@ -36,7 +38,7 @@ def _sliced_3mf(plate: int) -> bytes:
             '<object identify_id="3" name="Gewei" skipped="true"/></plate>'
             "</config>",
         )
-        archive.writestr(f"Metadata/plate_{plate}.gcode", "G28")
+        archive.writestr(f"Metadata/plate_{plate}.gcode", "; HEADER_BLOCK_START\n; total layer number: 853\nG28\n")
         archive.writestr("Metadata/plate_1.png", b"plate-1")
         archive.writestr("Metadata/plate_2.png", b"plate-2")
     return buffer.getvalue()
@@ -45,7 +47,7 @@ def _sliced_3mf(plate: int) -> bytes:
 def test_the_plate_a_3mf_prints_gives_its_weight_time_objects_and_picture() -> None:
     info = read_model_info(_sliced_3mf(plate=2))
 
-    assert (info.plate, info.objects) == (2, 2)
+    assert (info.plate, info.objects, info.layers) == (2, 2, 853)
     assert info.weight_grams == 42.75
     assert info.print_seconds == 5400
     assert info.thumbnail == b"plate-2"
@@ -127,3 +129,18 @@ def test_a_plates_g_code_header_gives_its_weight_time_and_largest_picture() -> N
 
     assert (info.weight_grams, info.print_seconds, info.thumbnail) == (12.75, 90005, b"\x89PNG large picture")
     assert info.objects == 4
+
+
+def test_a_data_connection_reuses_the_tls_session_of_the_control_connection() -> None:
+    context = MagicMock()
+    ftp = _ImplicitFTPS(context=context)
+    ftp._sock = MagicMock(session="control-session")
+    ftp._prot_p = True
+    ftp.host = "10.0.0.5"
+    raw = object()
+
+    with patch("ftplib.FTP.ntransfercmd", return_value=(raw, None)):
+        conn, _size = ftp.ntransfercmd("LIST /")
+
+    context.wrap_socket.assert_called_once_with(raw, server_hostname="10.0.0.5", session="control-session")
+    assert conn is context.wrap_socket.return_value

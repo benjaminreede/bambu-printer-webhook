@@ -47,6 +47,9 @@ _HEADER_TIME = re.compile(
     r"^; (?:model printing time: [^;\n]*; )?total estimated time: (?P<time>[^;\n]+)", re.MULTILINE
 )
 _HEADER_LABELS = re.compile(r"^; model label id: (?P<labels>[\d,\s]+)$", re.MULTILINE)
+_HEADER_LAYERS = re.compile(r"^; total layer number: (?P<layers>\d+)", re.MULTILINE)
+_GCODE_HEAD_BYTES = 16384
+"""How much of a plate's G-code inside a 3mf holds its header."""
 _DURATION_PART = re.compile(r"(\d+)\s*([dhms])")
 _THUMBNAIL = re.compile(
     r"^; thumbnail(?:_png)? begin (?P<width>\d+)x(?P<height>\d+) \d+\n"
@@ -104,6 +107,8 @@ class ModelInfo:
     plate: int | None = None
     objects: int | None = None
     """How many objects stand on the plate."""
+    layers: int | None = None
+    """How many layers the plate has, from its G-code's header."""
 
 
 class _ImplicitFTPS(ftplib.FTP_TLS):
@@ -122,6 +127,15 @@ class _ImplicitFTPS(ftplib.FTP_TLS):
         if value is not None and not isinstance(value, ssl.SSLSocket):
             value = self.context.wrap_socket(value)
         self._sock = value
+
+    def ntransfercmd(self, cmd, rest=None):
+        """A data connection that reuses the TLS session of the control
+        connection: a P2S refuses one that doesn't ("522 SSL connection
+        failed: session reuse required"); a P1S takes either."""
+        conn, size = ftplib.FTP.ntransfercmd(self, cmd, rest)
+        if self._prot_p:
+            conn = self.context.wrap_socket(conn, server_hostname=self.host, session=self.sock.session)
+        return conn, size
 
 
 class PrinterStorage:
@@ -324,7 +338,14 @@ def read_model_info(content: bytes) -> ModelInfo:
         picture = f"Metadata/plate_{plate}.png"
         thumbnail = archive.read(picture) if picture in names else None
 
-    return ModelInfo(weight, seconds, thumbnail, plate if sliced else None, objects)
+        layers: int | None = None
+        if sliced:
+            with archive.open(f"Metadata/plate_{plate}.gcode") as gcode:
+                head = gcode.read(_GCODE_HEAD_BYTES).decode("utf-8", errors="replace")
+            layers_match = _HEADER_LAYERS.search(head)
+            layers = int(layers_match["layers"]) if layers_match else None
+
+    return ModelInfo(weight, seconds, thumbnail, plate if sliced else None, objects, layers)
 
 
 def read_gcode_head(content: bytes) -> ModelInfo:
@@ -362,7 +383,10 @@ def read_gcode_head(content: bytes) -> ModelInfo:
     labels_match = _HEADER_LABELS.search(text)
     objects = len([label for label in labels_match["labels"].split(",") if label.strip()]) if labels_match else None
 
-    return ModelInfo(weight, seconds, thumbnail, objects=objects or None)
+    layers_match = _HEADER_LAYERS.search(text)
+    layers = int(layers_match["layers"]) if layers_match else None
+
+    return ModelInfo(weight, seconds, thumbnail, objects=objects or None, layers=layers)
 
 
 def parse_duration(value: str) -> int | None:

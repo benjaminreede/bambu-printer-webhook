@@ -59,16 +59,24 @@
         "data": {
           "interval": "Interval",
           "price_entity": "Sensor met stroomprijs",
-          "price_per_kwh": "Vaste stroomprijs",
-          "history_since": "Prints op de printer vanaf"
+          "price_per_kwh": "Vaste stroomprijs"
         },
         "data_description": {
           "interval": "Hoe vaak de stand hoe dan ook verstuurd wordt, in seconden.",
           "price_entity": "Een sensor met de all-in prijs per kWh (inclusief belastingen), voor een dynamisch tarief: elke kWh wordt afgerekend tegen de prijs van het moment waarop hij verbruikt is. In cent per kWh wordt omgerekend.",
-          "price_per_kwh": "Euro per kWh, als er geen prijssensor is.",
-          "history_since": "Vul een dag in om de prints die nog op de opslag van elke printer staan eenmalig naar de site te sturen, vanaf die dag. Leeg: er wordt niets geïmporteerd. De dag aanpassen heeft geen effect meer zodra de import gedraaid heeft."
+          "price_per_kwh": "Euro per kWh, als er geen prijssensor is."
         }
       }
+    }
+  },
+  "issues": {
+    "no_local_access": {
+      "title": "Geen lokale toegang tot {printer}",
+      "description": "De Bambu Lab-integratie heeft geen lokaal IP-adres en toegangscode voor {printer}. Zonder die twee kan de 3mf van een print niet van de printer zelf gelezen worden en komt hij alleen uit de cache van de Bambu Lab-integratie, waar een eerdere print met dezelfde naam in kan staan. Ook de prints op de opslag kunnen niet opgehaald worden.\\n\\nVul het IP-adres en de toegangscode van de printer in bij de Bambu Lab-integratie (Configureren). Deze melding verdwijnt zodra ze er staan."
+    },
+    "storage_unreadable": {
+      "title": "Opslag van {printer} niet leesbaar",
+      "description": "De opslag van {printer} (SD-kaart of USB-stick) kon de laatste keer niet via het lokale netwerk gelezen worden. Controleer of de printer aan staat en bereikbaar is op het IP-adres in de Bambu Lab-integratie, of de toegangscode nog klopt, en of er een opslag in zit. Deze melding verdwijnt zodra hij weer gelezen kan worden."
     }
   }
 }

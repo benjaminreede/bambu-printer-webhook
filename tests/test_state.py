@@ -27,6 +27,9 @@ def _set_printing(bambu: BambuSetup) -> None:
     states.async_set(ids["start_time"], "2026-10-26T08:17:45+00:00")
     states.async_set(ids["end_time"], "2026-10-26T12:02:00+00:00")
     states.async_set(ids["print_weight"], "38.0")
+    objects = {"8": "Rendier", "47": "Rendier", "58": "Rendier", "69": "Rendier"}
+    states.async_set(ids["printable_objects"], "4", {"objects": objects})
+    states.async_set(ids["skipped_objects"], "2", {"objects": [58, 47]})
     states.async_set(ids["online"], "on")
     states.async_set(ids["stage"], "printing")
     states.async_set(ids["print_error"], "off")
@@ -67,6 +70,8 @@ async def test_builds_the_full_state_of_a_printing_printer(hass: HomeAssistant, 
             "start_time": "2026-10-26T08:17:45+00:00",
             "end_time": "2026-10-26T12:02:00+00:00",
             "weight_grams": 38,
+            "objects": 4,
+            "skipped_objects": [47, 58],
         },
         "ams": [
             {
