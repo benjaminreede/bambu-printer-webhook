@@ -589,12 +589,13 @@ class PrinterSender:
 
     @staticmethod
     def _fits(request: dict[str, Any], content: bytes) -> bool:
-        """Whether a 3mf prints the plate asked for, at its weight (within 5%)
-        and with its number of layers."""
+        """Whether a 3mf prints the plate asked for: with its number of
+        layers, else at its weight (within 5%). The layers come from the
+        printer; the weight can be another print's (see _async_send_model)."""
         info = read_model_info(content)
         layers = request.get("total_layers")
-        if layers and info.layers is not None and info.layers != layers:
-            return False
+        if layers and info.layers is not None:
+            return info.layers == layers and (request.get("plate") is None or info.plate in (None, request["plate"]))
         plate = request.get("plate")
         if plate is not None and info.plate is not None and info.plate != plate:
             return False

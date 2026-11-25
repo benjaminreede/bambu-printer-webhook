@@ -717,6 +717,24 @@ async def test_a_3mf_asked_for_in_the_reply_is_sent_once_from_the_cache_closest_
     assert models[0]["file"][0] == "100-Christmas Moose.gcode.3mf"
 
 
+async def test_a_3mf_asked_for_with_the_prints_layers_is_sent_whatever_weight_the_receiver_has(
+    hass: HomeAssistant, bambu: BambuSetup, aioclient_mock: AiohttpClientMocker, freezer, tmp_path
+) -> None:
+    hass.config.config_dir = str(tmp_path)
+    _set_print(hass, bambu, "finish")
+    _cache_model(hass, "100-Christmas Moose.gcode.3mf", "2026-10-26T08:18:00+00:00").write_bytes(_sliced(853))
+    request = {**_REQUEST, "plate": 1, "weight_grams": 201, "total_layers": 853}
+    aioclient_mock.post(URL, json={"ok": True, "requests": [request]})
+    await _set_up(hass)
+
+    await _tick(hass, freezer, 31)
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert any(
+        isinstance(call[2], FormData) and _form(call[2])["kind"] == "model" for call in aioclient_mock.mock_calls
+    )
+
+
 async def test_a_3mf_of_another_weight_than_the_print_asked_for_is_not_sent(
     hass: HomeAssistant, bambu: BambuSetup, aioclient_mock: AiohttpClientMocker, freezer, tmp_path
 ) -> None:

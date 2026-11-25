@@ -237,8 +237,9 @@ what it asked for asks again later. For now there is one kind:
 The integration looks in the Bambu Lab integration's cache for the 3mf named
 after the task and cached closest to the start time, else, while the printer
 isn't printing, on the printer's storage for the 3mf of that name. It only
-sends a file whose plate, weight (within 5%) and layers match the print, as a
-later file of the same name can be sliced otherwise, as a `model` with
+sends a file whose plate and layers match the print (without layers: whose
+plate and weight, within 5%), as a later file of the same name can be sliced
+otherwise, as a `model` with
 `print_job_id`. Nothing found, it lets it be until Home Assistant restarts.
 
 ## Stored prints
