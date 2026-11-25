@@ -36,7 +36,7 @@ def _sliced_3mf(plate: int) -> bytes:
             '<object identify_id="3" name="Gewei" skipped="true"/></plate>'
             "</config>",
         )
-        archive.writestr(f"Metadata/plate_{plate}.gcode", "G28")
+        archive.writestr(f"Metadata/plate_{plate}.gcode", "; HEADER_BLOCK_START\n; total layer number: 853\nG28\n")
         archive.writestr("Metadata/plate_1.png", b"plate-1")
         archive.writestr("Metadata/plate_2.png", b"plate-2")
     return buffer.getvalue()
@@ -45,7 +45,7 @@ def _sliced_3mf(plate: int) -> bytes:
 def test_the_plate_a_3mf_prints_gives_its_weight_time_objects_and_picture() -> None:
     info = read_model_info(_sliced_3mf(plate=2))
 
-    assert (info.plate, info.objects) == (2, 2)
+    assert (info.plate, info.objects, info.layers) == (2, 2, 853)
     assert info.weight_grams == 42.75
     assert info.print_seconds == 5400
     assert info.thumbnail == b"plate-2"

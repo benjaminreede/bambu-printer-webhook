@@ -60,6 +60,11 @@ from .state import Price, SettledTray, build_state, meter_kwh, price_per_kwh
 _LOGGER = logging.getLogger(__name__)
 
 
+def _layers_of(print_: dict[str, Any]) -> dict[str, Any]:
+    """The print's layer count, as a 3mf has to match it."""
+    return {"total_layers": print_["total_layers"]} if print_.get("total_layers") else {}
+
+
 def _modified(stored: StoredFile) -> str:
     if stored.modified is None:
         return ""
@@ -287,6 +292,11 @@ class PrinterSender:
         self._importing = False
         self._answering: set[Any] = set()
         self._answered: set[Any] = set()
+        self._refused_model: list[Any] | None = None
+        self._wanted_model: dict[str, Any] | None = None
+        """A running print whose cached 3mf was another print's: its own 3mf
+        is fetched from the printer's storage once that can be read."""
+        self._fetching_model = False
         self._reported_no_access = False
         self._client = client
         self._sent_files = sent_files
@@ -452,6 +462,18 @@ class PrinterSender:
             if document["status"] in FILE_STATUSES and print_ and print_["start_time"]:
                 await self._async_send_cover(print_)
                 await self._async_send_model(print_)
+            elif (
+                self._wanted_model is not None
+                and not self._fetching_model
+                and document["online"]
+                and document["status"] not in NOT_READING_STATUSES
+            ):
+                # Its own storage is readable again: the print has ended.
+                self._fetching_model = True
+                self._hass.async_create_background_task(
+                    self._async_send_stored_model_of(self._wanted_model),
+                    f"{DOMAIN} 3mf of the last print of {self.printer.serial}",
+                )
             elif self._may_import(document):
                 # After a delivered state, so the receiver knows the printer.
                 self._importing = True
@@ -542,10 +564,37 @@ class PrinterSender:
             await self._hass.async_add_executor_job(storage.close)
         return None
 
+    async def _async_send_stored_model_of(self, print_: dict[str, Any]) -> None:
+        """Send the 3mf of a print that ended, from the printer's own storage:
+        the one of its name with the layers the printer printed. Tried once;
+        the file may have been sent again for a later print since."""
+        try:
+            found = await self._async_stored_model({"task_name": print_["task_name"], **_layers_of(print_)})
+            if found is None:
+                _LOGGER.info(
+                    "The 3mf of print %s of printer %s is not on its storage either",
+                    print_["task_name"],
+                    self.printer.serial,
+                )
+                return
+            filename, content = found
+            await self._client.async_post_file(
+                FILE_MODEL, self._file_fields(print_), filename, "application/octet-stream", content
+            )
+        except Exception:  # noqa: BLE001 - a failed lookup must not stop the states
+            _LOGGER.warning("Could not read the 3mf of the last print of %s", self.printer.serial, exc_info=True)
+        finally:
+            self._wanted_model = None
+            self._fetching_model = False
+
     @staticmethod
     def _fits(request: dict[str, Any], content: bytes) -> bool:
-        """Whether a 3mf prints the plate asked for, at its weight (within 5%)."""
+        """Whether a 3mf prints the plate asked for, at its weight (within 5%)
+        and with its number of layers."""
         info = read_model_info(content)
+        layers = request.get("total_layers")
+        if layers and info.layers is not None and info.layers != layers:
+            return False
         plate = request.get("plate")
         if plate is not None and info.plate is not None and info.plate != plate:
             return False
@@ -689,11 +738,34 @@ class PrinterSender:
             _LOGGER.warning("Not sending %s: larger than %s bytes", model.path.name, MAX_MODEL_BYTES)
             self._sent_files.set(self.printer.serial, FILE_MODEL, sent)
             return
+        # ha-bambulab can take a print started through Bambu's cloud for the
+        # one before it of the same name and reuse that one's cached 3mf. The
+        # printer's own layer count tells: a 3mf of other layers is another
+        # print's, and the print's own is fetched from the printer once the
+        # print has ended. Kept until the layer count changes, as a print can
+        # still report the previous print's count when it has just started.
+        refused = [*sent, print_.get("total_layers")]
+        if refused == self._refused_model:
+            return
         content = await self._hass.async_add_executor_job(model.path.read_bytes)
+        info = await self._hass.async_add_executor_job(read_model_info, content)
+        if print_.get("total_layers") and info.layers is not None and info.layers != print_["total_layers"]:
+            _LOGGER.info(
+                "Not sending %s for print %s of printer %s: it has %s layers, the print %s",
+                model.path.name,
+                print_["task_name"],
+                self.printer.serial,
+                info.layers,
+                print_["total_layers"],
+            )
+            self._refused_model = refused
+            self._wanted_model = dict(print_)
+            return
         if await self._client.async_post_file(
             FILE_MODEL, self._file_fields(print_), model.path.name, "application/octet-stream", content
         ):
             self._sent_files.set(self.printer.serial, FILE_MODEL, sent)
+            self._wanted_model = None
 
 
 class WebhookManager:

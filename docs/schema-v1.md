@@ -209,6 +209,15 @@ print started; when there is none (no local access to the printer, or a file
 whose name doesn't match the task) no 3mf is sent. Files over 100 MB are not
 sent.
 
+That file is only sent when its plate has as many layers as the printer
+reports for the print (`print.total_layers`). For a print started through
+Bambu's cloud, the Bambu Lab integration can take the print for the one before
+it of the same name and reuse that one's cached 3mf: a plate of other layers is
+another print's. The print's own 3mf is then read from the printer's storage
+once the print has ended (the storage can't be read while it prints), and sent
+with the print's `task_name` and `start_time`, if a 3mf of its name and layers
+is there. Added in 0.6.0.
+
 ## Requests
 
 The receiver can ask for something in its reply to a state: a JSON object
@@ -223,12 +232,13 @@ what it asked for asks again later. For now there is one kind:
 | `start_time` | When the print started, ISO 8601. |
 | `plate` | The plate it printed, or null. |
 | `weight_grams` | Its weight as the slicer gave it, or null. |
+| `total_layers` | Its number of layers as the printer reported it, or null. Optional. |
 
 The integration looks in the Bambu Lab integration's cache for the 3mf named
 after the task and cached closest to the start time, else, while the printer
 isn't printing, on the printer's storage for the 3mf of that name. It only
-sends a file whose plate and weight (within 5%) match the print, as a later
-file of the same name can be sliced otherwise, as a `model` with
+sends a file whose plate, weight (within 5%) and layers match the print, as a
+later file of the same name can be sliced otherwise, as a `model` with
 `print_job_id`. Nothing found, it lets it be until Home Assistant restarts.
 
 ## Stored prints

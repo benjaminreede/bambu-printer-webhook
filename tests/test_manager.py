@@ -358,6 +358,46 @@ async def test_a_3mf_of_another_or_an_earlier_print_is_not_sent(
     assert webhook.call_count == 1
 
 
+def _sliced(layers: int) -> bytes:
+    """A 3mf of plate 1 whose G-code header gives its number of layers."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("Metadata/plate_1.gcode", f"; HEADER_BLOCK_START\n; total layer number: {layers}\nG28\n")
+    return buffer.getvalue()
+
+
+async def test_a_cached_3mf_of_other_layers_is_not_sent_and_the_prints_own_comes_from_the_printer_after(
+    hass: HomeAssistant, bambu: BambuSetup, webhook: AiohttpClientMocker, freezer, storage, tmp_path, monkeypatch
+) -> None:
+    hass.config.config_dir = str(tmp_path)
+    hass.config_entries.async_update_entry(bambu.entry, options={"host": "192.168.1.50", "access_code": "12345678"})
+    hass.states.async_set(bambu.entity_ids["online"], "on")
+    _set_print(hass, bambu, "running")
+    hass.states.async_set(bambu.entity_ids["total_layers"], "853")
+    # ha-bambulab took this print for the earlier one of its name, a plate of 939 layers.
+    _cache_model(hass, "38798457-Christmas Moose.gcode.3mf", "2026-10-26T08:18:00+00:00").write_bytes(_sliced(939))
+    monkeypatch.setattr(
+        storage, "files", [StoredFile("/cache/Christmas Moose.gcode.3mf", 9, datetime(2026, 10, 26, 8, 17, tzinfo=UTC))]
+    )
+    await _set_up(hass)
+
+    await _tick(hass, freezer, 31)
+    await _tick(hass, freezer, 301)
+
+    assert not any(isinstance(call[2], FormData) for call in webhook.mock_calls), "no 3mf while printing"
+
+    monkeypatch.setattr(storage, "read", lambda _self, _path: _sliced(853))
+    hass.states.async_set(bambu.entity_ids["print_status"], "finish")
+    await hass.async_block_till_done()
+    await _tick(hass, freezer, 31)
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    models = [_form(call[2]) for call in webhook.mock_calls if isinstance(call[2], FormData)]
+    assert [(model["kind"], model["file"][0], model["start_time"]) for model in models] == [
+        ("model", "Christmas Moose.gcode.3mf", START)
+    ]
+
+
 async def test_a_file_the_webhook_refused_is_sent_again_with_the_next_state(
     hass: HomeAssistant, bambu: BambuSetup, aioclient_mock: AiohttpClientMocker, freezer, cover
 ) -> None:
