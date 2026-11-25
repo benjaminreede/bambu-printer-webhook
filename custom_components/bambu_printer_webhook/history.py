@@ -128,6 +128,15 @@ class _ImplicitFTPS(ftplib.FTP_TLS):
             value = self.context.wrap_socket(value)
         self._sock = value
 
+    def ntransfercmd(self, cmd, rest=None):
+        """A data connection that reuses the TLS session of the control
+        connection: a P2S refuses one that doesn't ("522 SSL connection
+        failed: session reuse required"); a P1S takes either."""
+        conn, size = ftplib.FTP.ntransfercmd(self, cmd, rest)
+        if self._prot_p:
+            conn = self.context.wrap_socket(conn, server_hostname=self.host, session=self.sock.session)
+        return conn, size
+
 
 class PrinterStorage:
     """One connection to a printer's storage.
