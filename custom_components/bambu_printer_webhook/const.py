@@ -51,9 +51,6 @@ CONF_PRICE_ENTITY: Final = "price_entity"
 CONF_PRICE_PER_KWH: Final = "price_per_kwh"
 """The electricity price: a sensor (a dynamic tariff), else a fixed price."""
 
-CONF_HISTORY_SINCE: Final = "history_since"
-"""The day from which the prints on a printer's storage are imported, once;
-without one, nothing is imported."""
 
 STARTUP_DELAY: Final = timedelta(seconds=30)
 """How long after setup the first state is sent, so ha-bambulab has connected."""
@@ -78,7 +75,19 @@ FILE_HISTORY: Final = "history"
 """A print found on the printer's storage, with the picture of its plate."""
 
 REQUEST_PRINT_FILES: Final = "print_files"
-"""A receiver asking, in its reply to a state, for the 3mf of one of its prints."""
+"""A receiver asking for the 3mf of one of its prints."""
+
+REQUEST_STORED_PRINTS: Final = "stored_prints"
+"""A receiver asking for the prints on a printer's storage, from a day on."""
+
+SOURCE_PRINTER: Final = "printer"
+"""A 3mf read from the printer's own storage: the file it printed from."""
+
+SOURCE_CACHE: Final = "cache"
+"""A 3mf from ha-bambulab's cache, which can be an earlier print's of the same name."""
+
+POLL_INTERVAL: Final = timedelta(minutes=1)
+"""How often the receiver is asked whether it wants anything."""
 
 PRINT_STATUSES: Final = frozenset(
     {"idle", "init", "prepare", "slicing", "running", "pause", "finish", "failed", "offline", "unknown"}

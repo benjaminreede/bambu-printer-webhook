@@ -24,6 +24,7 @@ from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, STATE_UNAVAILABLE, 
 from homeassistant.core import CALLBACK_TYPE, CoreState, Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import (
     async_call_later,
@@ -43,12 +44,17 @@ from .const import (
     FILE_STATUSES,
     MAX_MODEL_BYTES,
     NOT_READING_STATUSES,
+    POLL_INTERVAL,
     REDISCOVERY_DELAY,
     REQUEST_PRINT_FILES,
+    REQUEST_STORED_PRINTS,
     REQUEST_TIMEOUT_SECONDS,
     RUNOUT_STAGE,
+    SCHEMA_VERSION,
     SETTLE_DELAY,
     SETTLED_SEND_DELAY,
+    SOURCE_CACHE,
+    SOURCE_PRINTER,
     STARTUP_DELAY,
 )
 from .discovery import PrinterEntities, find_printers
@@ -111,6 +117,12 @@ class WebhookClient:
             REQUEST_TIMEOUT_SECONDS,
             json=document,
         )
+
+    async def async_poll(self, serials: list[str]) -> dict[str, Any] | None:
+        """Ask the receiver whether it wants anything of these printers: a
+        ping naming them. Its reply, as for a state."""
+        document = {"schema_version": SCHEMA_VERSION, "ping": True, "printers": serials}
+        return await self._post("a poll", REQUEST_TIMEOUT_SECONDS, json=document)
 
     async def async_post_file(
         self, kind: str, fields: dict[str, str], filename: str, content_type: str, content: bytes
@@ -202,10 +214,10 @@ class SentFiles:
 
 
 class HistoryImports:
-    """Which stored prints were delivered for each printer, and whether all were.
+    """Which stored prints were delivered for each printer.
 
-    Kept across restarts, so the import resumes where it stopped and runs
-    only once.
+    Kept across restarts, so a stored print goes out once, however often the
+    receiver asks for the prints of a printer.
     """
 
     SAVE_DELAY = 10
@@ -217,20 +229,12 @@ class HistoryImports:
     async def async_load(self) -> None:
         self._imports = await self._store.async_load() or {}
 
-    def done(self, serial: str) -> bool:
-        return bool(self._imports.get(serial, {}).get("done"))
-
     def sent(self, serial: str, stored: StoredFile) -> bool:
         return stored.key in self._imports.get(serial, {}).get("sent", [])
 
     @callback
     def mark_sent(self, serial: str, stored: StoredFile) -> None:
         self._imports.setdefault(serial, {"done": False, "sent": []})["sent"].append(stored.key)
-        self._store.async_delay_save(lambda: self._imports, self.SAVE_DELAY)
-
-    @callback
-    def mark_done(self, serial: str) -> None:
-        self._imports.setdefault(serial, {"done": False, "sent": []})["done"] = True
         self._store.async_delay_save(lambda: self._imports, self.SAVE_DELAY)
 
 
@@ -281,15 +285,16 @@ class PrinterSender:
         price: Price | None = None,
         history: HistoryImports | None = None,
         energy_costs: EnergyCosts | None = None,
-        history_since: datetime | None = None,
     ) -> None:
         self._hass = hass
-        self._history_since = history_since
         self.printer = printer
         self._price = price
         self._energy_costs = energy_costs
         self._history = history
         self._importing = False
+        self._imported_since: set[str | None] = set()
+        """The days from which the prints on the storage were all sent, since the start."""
+        self._storage_model_tried: list[Any] | None = None
         self._answering: set[Any] = set()
         self._answered: set[Any] = set()
         self._refused_model: list[Any] | None = None
@@ -298,6 +303,8 @@ class PrinterSender:
         is fetched from the printer's storage once that can be read."""
         self._fetching_model = False
         self._reported_no_access = False
+        self._storage_failed = False
+        """Whether the printer's storage could not be read the last time it was tried."""
         self._client = client
         self._sent_files = sent_files
         self._interval = interval
@@ -450,12 +457,13 @@ class PrinterSender:
     async def async_send_now(self) -> None:
         """Build the printer's current state and send it, then the print's files."""
         async with self._lock:
+            self._check_setup()
             document = self._build_state()
             reply = await self._client.async_post_state(document)
             if reply is None:
                 return
             self._sent_significant = self._significant(document)
-            self._answer_requests(reply.get("requests"), document)
+            self.answer_requests(reply.get("requests"))
             # Only after a delivered state showing the print running, so the
             # receiver knows the print the files belong to.
             print_ = document["print"]
@@ -474,20 +482,20 @@ class PrinterSender:
                     self._async_send_stored_model_of(self._wanted_model),
                     f"{DOMAIN} 3mf of the last print of {self.printer.serial}",
                 )
-            elif self._may_import(document):
-                # After a delivered state, so the receiver knows the printer.
-                self._importing = True
-                self._hass.async_create_background_task(
-                    self._async_import_history(), f"{DOMAIN} history of {self.printer.serial}"
-                )
 
-    def _answer_requests(self, requests: Any, document: dict[str, Any]) -> None:
-        """Start on what the receiver asked for in its reply. The receiver asks
-        again an hour later while it hasn't got the file; it is only looked
-        for again when the printer's storage couldn't be read because it was
-        printing, or after a restart."""
+    @callback
+    def answer_requests(self, requests: Any) -> None:
+        """Start on what the receiver asked for, in its reply to a state or to
+        a poll. It keeps asking while it lacks what it asked for; each is
+        handled once, unless the printer's storage couldn't be read because
+        it was printing, or after a restart."""
+        document = self._build_state()
         for request in requests if isinstance(requests, list) else []:
-            if not isinstance(request, dict) or request.get("kind") != REQUEST_PRINT_FILES:
+            if not isinstance(request, dict):
+                continue
+            if request.get("kind") == REQUEST_STORED_PRINTS:
+                self._start_import(request.get("since"), document)
+            if request.get("kind") != REQUEST_PRINT_FILES:
                 continue
             print_job_id = request.get("print_job_id")
             if print_job_id in self._answering or print_job_id in self._answered:
@@ -498,16 +506,18 @@ class PrinterSender:
             )
 
     async def _async_send_requested_model(self, request: dict[str, Any], document: dict[str, Any]) -> None:
-        """Send the 3mf of a print the receiver asked for: from ha-bambulab's
-        cache, else from the printer's storage while it isn't printing. Only
-        a file of the same plate and weight as the print, as a later file of
-        the same name can be sliced otherwise."""
+        """Send the 3mf of a print the receiver asked for: from the printer's
+        storage while it isn't printing, else from ha-bambulab's cache. Only
+        a file of the print's plate and layers (or weight, without them), as
+        a later file of the same name can be sliced otherwise."""
         printing = document["status"] in NOT_READING_STATUSES
         done = False
         try:
-            found = await self._async_cached_model(request)
-            if found is None and not printing:
-                found = await self._async_stored_model(request)
+            found = source = None
+            if not printing:
+                found, source = await self._async_stored_model(request), SOURCE_PRINTER
+            if found is None:
+                found, source = await self._async_cached_model(request), SOURCE_CACHE
             done = found is not None or not printing
             if found is None:
                 _LOGGER.info(
@@ -521,6 +531,7 @@ class PrinterSender:
                     "printer_serial": self.printer.serial,
                     "task_name": str(request.get("task_name") or ""),
                     "print_job_id": str(request.get("print_job_id")),
+                    "source": source,
                 },
                 filename,
                 "application/octet-stream",
@@ -551,7 +562,7 @@ class PrinterSender:
         if access is None or not request.get("task_name"):
             return None
         wanted = str(request["task_name"]).strip().casefold()
-        storage = await self._hass.async_add_executor_job(PrinterStorage, *access, dt_util.DEFAULT_TIME_ZONE)
+        storage = await self._open_storage(access)
         try:
             stored_files = await self._hass.async_add_executor_job(storage.stored_files, dt_util.utcnow())
             for stored in reversed(stored_files):
@@ -579,7 +590,11 @@ class PrinterSender:
                 return
             filename, content = found
             await self._client.async_post_file(
-                FILE_MODEL, self._file_fields(print_), filename, "application/octet-stream", content
+                FILE_MODEL,
+                {**self._file_fields(print_), "source": SOURCE_PRINTER},
+                filename,
+                "application/octet-stream",
+                content,
             )
         except Exception:  # noqa: BLE001 - a failed lookup must not stop the states
             _LOGGER.warning("Could not read the 3mf of the last print of %s", self.printer.serial, exc_info=True)
@@ -604,15 +619,63 @@ class PrinterSender:
             return False
         return True
 
-    def _may_import(self, document: dict[str, Any]) -> bool:
-        return (
-            self._history is not None
-            and self._history_since is not None
-            and not self._importing
-            and not self._history.done(self.printer.serial)
-            and document["online"]
-            and document["status"] not in NOT_READING_STATUSES
+    @callback
+    def _start_import(self, since: Any, document: dict[str, Any]) -> None:
+        """Send the prints on the printer's storage from the day ``since``
+        (``2026-09-01``, or all without one) on, those not sent before; once
+        per day asked for, and only while the printer isn't printing."""
+        day = dt_util.parse_date(str(since)) if since else None
+        key = day.isoformat() if day else None
+        if (
+            self._history is None
+            or self._importing
+            or key in self._imported_since
+            or not document["online"]
+            or document["status"] in NOT_READING_STATUSES
+        ):
+            return
+        self._importing = True
+        self._hass.async_create_background_task(
+            self._async_import_history(key, dt_util.start_of_local_day(day) if day else None),
+            f"{DOMAIN} history of {self.printer.serial}",
         )
+
+    async def _open_storage(self, access: tuple[str, str]) -> PrinterStorage:
+        """Connect to the printer's storage, noting whether that worked (see _check_setup)."""
+        try:
+            storage = await self._hass.async_add_executor_job(PrinterStorage, *access, dt_util.DEFAULT_TIME_ZONE)
+        except Exception:
+            self._storage_failed = True
+            self._check_setup()
+            raise
+        self._storage_failed = False
+        self._check_setup()
+        return storage
+
+    @callback
+    def _check_setup(self) -> None:
+        """Show under Repairs what keeps this printer's 3mf's from being read
+        from the printer itself: no local address and access code in the
+        Bambu Lab integration, or a storage that couldn't be read."""
+        name = self.printer.name or self.printer.serial
+        self._set_issue("no_local_access", self._storage_access() is None, name)
+        self._set_issue("storage_unreadable", self._storage_failed, name)
+
+    @callback
+    def _set_issue(self, kind: str, present: bool, name: str) -> None:
+        issue_id = f"{kind}_{self.printer.serial}"
+        if present:
+            ir.async_create_issue(
+                self._hass,
+                DOMAIN,
+                issue_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key=kind,
+                translation_placeholders={"printer": name},
+            )
+        else:
+            ir.async_delete_issue(self._hass, DOMAIN, issue_id)
 
     def _storage_access(self) -> tuple[str, str] | None:
         """The printer's address and LAN access code from ha-bambulab's setup."""
@@ -623,7 +686,7 @@ class PrinterSender:
                 return (host, access_code) if host and access_code else None
         return None
 
-    async def _async_import_history(self) -> None:
+    async def _async_import_history(self, key: str | None, since: datetime | None) -> None:
         """Send every print on the printer's storage not sent yet, oldest first.
 
         Stops when the printer starts printing or a print cannot be
@@ -640,9 +703,10 @@ class PrinterSender:
                     )
                     self._reported_no_access = True
                 return
-            storage = await self._hass.async_add_executor_job(PrinterStorage, *access, dt_util.DEFAULT_TIME_ZONE)
+            storage = await self._open_storage(access)
             try:
-                await self._async_send_stored(storage)
+                if await self._async_send_stored(storage, since):
+                    self._imported_since.add(key)
             finally:
                 await self._hass.async_add_executor_job(storage.close)
         except Exception:  # noqa: BLE001 - an unreachable printer must not stop the states
@@ -650,17 +714,16 @@ class PrinterSender:
         finally:
             self._importing = False
 
-    async def _async_send_stored(self, storage: PrinterStorage) -> None:
+    async def _async_send_stored(self, storage: PrinterStorage, since: datetime | None) -> bool:
+        """Whether all were delivered."""
         assert self._history is not None
         serial = self.printer.serial
-        stored_files = await self._hass.async_add_executor_job(
-            storage.stored_files, dt_util.utcnow(), self._history_since
-        )
+        stored_files = await self._hass.async_add_executor_job(storage.stored_files, dt_util.utcnow(), since)
         for stored in stored_files:
             if self._history.sent(serial, stored):
                 continue
             if self._build_state()["status"] in NOT_READING_STATUSES:
-                return
+                return False
             info = None
             if stored.is_plate:
                 head = await self._hass.async_add_executor_job(storage.read_head, stored.path)
@@ -680,10 +743,10 @@ class PrinterSender:
                 "plate_objects": "" if info is None or info.objects is None else str(info.objects),
             }
             if not await self._client.async_post_history(fields, info.thumbnail if info else None):
-                return
+                return False
             self._history.mark_sent(serial, stored)
-        self._history.mark_done(serial)
         _LOGGER.info("Sent the %s stored prints of printer %s", len(stored_files), serial)
+        return True
 
     def _file_fields(self, print_: dict[str, Any]) -> dict[str, str]:
         return {
@@ -719,10 +782,18 @@ class PrinterSender:
             self._sent_files.set(self.printer.serial, FILE_COVER_IMAGE, sent)
 
     async def _async_send_model(self, print_: dict[str, Any]) -> None:
+        """Send the running print's 3mf: the one on the printer's own storage,
+        else the one in ha-bambulab's cache, each only with the print's
+        number of layers."""
         if not print_["task_name"]:
             return
         started = dt_util.parse_datetime(print_["start_time"])
         if started is None:
+            return
+        delivered = self._sent_files.get(self.printer.serial, FILE_MODEL)
+        if delivered and delivered[0] == print_["start_time"]:
+            return
+        if await self._async_send_model_from_printer(print_):
             return
         directories = cache_directories(
             Path(self._hass.config.config_dir), self._hass.config.media_dirs.get("local"), self.printer.serial
@@ -763,10 +834,46 @@ class PrinterSender:
             self._wanted_model = dict(print_)
             return
         if await self._client.async_post_file(
-            FILE_MODEL, self._file_fields(print_), model.path.name, "application/octet-stream", content
+            FILE_MODEL,
+            {**self._file_fields(print_), "source": SOURCE_CACHE},
+            model.path.name,
+            "application/octet-stream",
+            content,
         ):
             self._sent_files.set(self.printer.serial, FILE_MODEL, sent)
             self._wanted_model = None
+
+    async def _async_send_model_from_printer(self, print_: dict[str, Any]) -> bool:
+        """Send the running print's 3mf from the printer's own storage: the
+        one of its name with the print's number of layers, the file the
+        printer prints from. Read once per print, and again when the layer
+        count changes (a print just started can still report the previous
+        print's count) or the file wasn't delivered. Whether it was found."""
+        access = self._storage_access()
+        tried = [print_["start_time"], print_.get("total_layers")]
+        if access is None or tried == self._storage_model_tried:
+            return False
+        self._storage_model_tried = tried
+        try:
+            found = await self._async_stored_model({"task_name": print_["task_name"], **_layers_of(print_)})
+        except Exception:  # noqa: BLE001 - an unreachable printer must not stop the states
+            _LOGGER.warning("Could not read the 3mf of the print on printer %s", self.printer.serial, exc_info=True)
+            return False
+        if found is None:
+            return False
+        filename, content = found
+        if await self._client.async_post_file(
+            FILE_MODEL,
+            {**self._file_fields(print_), "source": SOURCE_PRINTER},
+            filename,
+            "application/octet-stream",
+            content,
+        ):
+            self._sent_files.set(self.printer.serial, FILE_MODEL, [print_["start_time"], filename, len(content)])
+            self._wanted_model = None
+        else:
+            self._storage_model_tried = None
+        return True
 
 
 class WebhookManager:
@@ -781,10 +888,8 @@ class WebhookManager:
         interval: timedelta,
         energy_sensors: dict[str, str] | None = None,
         price: Price | None = None,
-        history_since: datetime | None = None,
     ) -> None:
         self._hass = hass
-        self._history_since = history_since
         self._interval = interval
         self._energy_sensors = energy_sensors or {}
         self._price = price
@@ -795,6 +900,7 @@ class WebhookManager:
         self._senders: dict[str, PrinterSender] = {}
         self._unsubscribers: list[CALLBACK_TYPE] = []
         self._rediscovery: CALLBACK_TYPE | None = None
+        self._polling = False
 
     @property
     def client(self) -> WebhookClient:
@@ -818,6 +924,7 @@ class WebhookManager:
         self._unsubscribers.append(
             self._hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, self._on_registry_updated)
         )
+        self._unsubscribers.append(async_track_time_interval(self._hass, self._on_poll, POLL_INTERVAL))
         if self._hass.state is CoreState.running:
             self._discover(STARTUP_DELAY.total_seconds())
         else:
@@ -839,6 +946,25 @@ class WebhookManager:
         for sender in self._senders.values():
             sender.stop()
         self._senders.clear()
+
+    @callback
+    def _on_poll(self, _now: Any) -> None:
+        if self._senders and not self._polling:
+            self._polling = True
+            self._hass.async_create_background_task(self._async_poll(), f"{DOMAIN} poll")
+
+    async def _async_poll(self) -> None:
+        """Ask the receiver whether it wants anything of the printers, and
+        hand each request to the printer it names."""
+        try:
+            reply = await self._client.async_poll(sorted(self._senders))
+            requests = reply.get("requests") if reply else None
+            for request in requests if isinstance(requests, list) else []:
+                sender = self._senders.get(request.get("printer_serial")) if isinstance(request, dict) else None
+                if sender is not None:
+                    sender.answer_requests([request])
+        finally:
+            self._polling = False
 
     @callback
     def _on_registry_updated(self, event: Event[er.EventEntityRegistryUpdatedData]) -> None:
@@ -879,7 +1005,6 @@ class WebhookManager:
                 self._price,
                 self._history,
                 self._energy_costs,
-                self._history_since,
             )
             sender.start(first_send_delay)
             self._senders[serial] = sender

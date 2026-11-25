@@ -169,7 +169,18 @@ sends a ping to check the address and token:
 ```
 
 A receiver authenticates it like any request and answers `2xx` without
-storing anything. The answer decides what Home Assistant shows: `401` or `403`
+storing anything.
+
+Every minute, the integration also sends a ping naming the printers it sends
+states for, to ask whether the receiver wants anything of them:
+
+```json
+{ "schema_version": 1, "ping": true, "printers": ["01P09C510500566"] }
+```
+
+The receiver answers like a state, with any `requests` (see
+[Requests](#requests)), each naming its printer in `printer_serial`. Added in
+0.6.0. The answer decides what Home Assistant shows: `401` or `403`
 means the token is refused, `404` or `405` that the address doesn't take
 printer states, anything else that is not `2xx` an unexpected answer. The
 webhook is only saved once the ping is answered with `2xx`.
@@ -199,34 +210,39 @@ Accept: application/json
 | `task_name` | The print's task name, as `print.task_name`. |
 | `start_time` | The print's start time, exactly as `print.start_time`: match on it with some margin, since it can shift once while a print is being prepared. |
 | `print_job_id` | Only for a 3mf the receiver asked for (see Requests): the id it gave, naming the print the file belongs to. |
-| `file` | The file. A cover image is the plate's PNG preview (`cover.png`), or a JPEG from Bambu's cloud (`cover.jpg`). A 3mf keeps the name it has in the Bambu Lab integration's cache. |
+| `source` | Only for a 3mf: `printer` when it was read from the printer's own storage, the file the printer printed from; `cache` when it came from the Bambu Lab integration's cache, which can hold an earlier print of the same name. Added in 0.6.0. |
+| `file` | The file. A cover image is the plate's PNG preview (`cover.png`), or a JPEG from Bambu's cloud (`cover.jpg`). A 3mf keeps its name on the printer or in the cache. |
 
-Both come from the Bambu Lab integration, which downloads the 3mf of every
-print from the printer to read it; this integration never connects to the
-printer itself. The cover is its cover image entity. The 3mf is the newest file
-in its cache named after the task and cached at most 10 minutes before the
-print started; when there is none (no local access to the printer, or a file
-whose name doesn't match the task) no 3mf is sent. Files over 100 MB are not
+The cover is the Bambu Lab integration's cover image entity. The 3mf is read
+from the printer's own storage over its local FTPS, with the address and access
+code from the Bambu Lab integration: the newest 3mf named after the task whose
+plate has as many layers as the printer reports (`print.total_layers`). It is
+read once per print, and again when the layer count changes, since a print that
+has just started can still report the previous print's count.
+
+Without local access, or when no such file is on the storage, the 3mf comes from
+the Bambu Lab integration's cache: the newest file named after the task and
+cached at most 10 minutes before the print started, and only when its plate has
+the print's number of layers. For a print started through Bambu's cloud, the
+Bambu Lab integration can take the print for the one before it of the same name
+and reuse that one's cached 3mf, which a plate of other layers gives away. Then
+the print's own 3mf is read from the printer's storage once more after the
+print has ended. Without any of these, no 3mf is sent. Files over 100 MB are not
 sent.
-
-That file is only sent when its plate has as many layers as the printer
-reports for the print (`print.total_layers`). For a print started through
-Bambu's cloud, the Bambu Lab integration can take the print for the one before
-it of the same name and reuse that one's cached 3mf: a plate of other layers is
-another print's. The print's own 3mf is then read from the printer's storage
-once the print has ended (the storage can't be read while it prints), and sent
-with the print's `task_name` and `start_time`, if a 3mf of its name and layers
-is there. Added in 0.6.0.
 
 ## Requests
 
-The receiver can ask for something in its reply to a state: a JSON object
-with `requests`, a list. Each is handled once; a receiver that still lacks
-what it asked for asks again later. For now there is one kind:
+The receiver can ask for something in its reply to a state or to a ping: a
+JSON object with `requests`, a list. Each is handled once; a receiver that
+still lacks what it asked for asks again later. A request in the reply to a
+ping names its printer in `printer_serial`.
+
+**The 3mf of a print:**
 
 | Field | Meaning |
 |---|---|
-| `kind` | `print_files`: the 3mf of one of the receiver's prints. |
+| `kind` | `print_files`. |
+| `printer_serial` | The printer it was printed on. In a reply to a state, the printer of that state. |
 | `print_job_id` | The receiver's id of the print, sent back with the file. |
 | `task_name` | The print's task name. |
 | `start_time` | When the print started, ISO 8601. |
@@ -234,21 +250,33 @@ what it asked for asks again later. For now there is one kind:
 | `weight_grams` | Its weight as the slicer gave it, or null. |
 | `total_layers` | Its number of layers as the printer reported it, or null. Optional. |
 
-The integration looks in the Bambu Lab integration's cache for the 3mf named
-after the task and cached closest to the start time, else, while the printer
-isn't printing, on the printer's storage for the 3mf of that name. It only
-sends a file whose plate and layers match the print (without layers: whose
-plate and weight, within 5%), as a later file of the same name can be sliced
-otherwise, as a `model` with
-`print_job_id`. Nothing found, it lets it be until Home Assistant restarts.
+While the printer isn't printing, the integration looks on the printer's
+storage for the 3mf of that name, else in the Bambu Lab integration's cache for
+the one cached closest to the start time. It only sends a file whose plate and
+layers match the print (without layers: whose plate and weight, within 5%), as
+a later file of the same name can be sliced otherwise, as a `model` with
+`print_job_id` and its `source`. Nothing found, it lets it be until Home
+Assistant restarts.
+
+**The prints on a printer's storage:**
+
+| Field | Meaning |
+|---|---|
+| `kind` | `stored_prints`. Added in 0.6.0. |
+| `printer_serial` | The printer whose storage to read. |
+| `since` | A day (`2026-09-01`): only files written since then. Null or left out for all. |
+
+The prints are sent as described under [Stored prints](#stored-prints), while
+the printer isn't printing; asked again later for the same day, only prints not
+sent before go out.
 
 ## Stored prints
 
-Once per printer, the integration can also send every print the printer
-still has on its storage (SD card or USB stick), so a receiver can add the
-prints from before the integration was set up. It does so only once a day is
-set under **Configure**, and sends only files written since that day. Each print goes out as its own multipart request to the same URL,
-oldest first, after a delivered state of that printer.
+When the receiver asks for them (see [Requests](#requests)), the integration
+sends the prints a printer still has on its storage (SD card or USB stick), so
+a receiver can add the prints from before the integration was set up. Each
+print goes out once, as its own multipart request to the same URL, oldest
+first.
 
 A printer keeps, per project, the 3mf last sent to it (holding the one plate
 it was sent for) and, per plate it printed, that plate's G-code named
@@ -262,9 +290,8 @@ The storage is read over the printer's local FTPS with the address and access
 code from the Bambu Lab integration; without them (a printer set up through
 the cloud only) nothing is sent. It is only read while the printer isn't
 printing; when a print starts, or a request is refused or fails, the import
-stops and goes on from where it was after a later state. Once every stored
-print was delivered, the import is done for that printer and doesn't run
-again.
+stops and goes on from where it was when the receiver asks again. A stored
+print that was delivered is not sent again (kept across restarts).
 
 | Field | Meaning |
 |---|---|

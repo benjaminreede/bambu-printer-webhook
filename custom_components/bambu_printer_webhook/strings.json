@@ -59,16 +59,24 @@
         "data": {
           "interval": "Interval",
           "price_entity": "Electricity price sensor",
-          "price_per_kwh": "Fixed electricity price",
-          "history_since": "Stored prints from"
+          "price_per_kwh": "Fixed electricity price"
         },
         "data_description": {
           "interval": "How often the state is sent regardless of changes, in seconds.",
           "price_entity": "A sensor with the all-in price per kWh (taxes included), for a dynamic tariff: each kWh is paid at the price of the moment it was used. In cents per kWh is converted.",
-          "price_per_kwh": "Euros per kWh, used without a price sensor.",
-          "history_since": "Fill in a day to send the prints still on each printer's storage to the site, once, from that day on. Empty: nothing is imported. Changing the day has no effect once the import has run."
+          "price_per_kwh": "Euros per kWh, used without a price sensor."
         }
       }
+    }
+  },
+  "issues": {
+    "no_local_access": {
+      "title": "No local access to {printer}",
+      "description": "The Bambu Lab integration has no local IP address and access code for {printer}. Without them, the 3mf of a print can't be read from the printer itself and comes only from the Bambu Lab integration's cache, which can hold an earlier print of the same name; the prints on its storage can't be fetched either.\\n\\nFill in the printer's IP address and access code in the Bambu Lab integration (Configure). This message goes away once they are there."
+    },
+    "storage_unreadable": {
+      "title": "Can't read the storage of {printer}",
+      "description": "The storage of {printer} (SD card or USB stick) could not be read over the local network the last time it was tried. Check that the printer is on, reachable at the IP address set in the Bambu Lab integration, that the access code is still right, and that it has a storage inserted. This message goes away once it can be read again."
     }
   }
 }

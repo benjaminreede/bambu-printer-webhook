@@ -14,6 +14,7 @@ from aiohttp import FormData
 from homeassistant.components.image import Image
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
@@ -40,6 +41,13 @@ async def _tick(hass: HomeAssistant, freezer, seconds: float) -> None:
     freezer.tick(timedelta(seconds=seconds))
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
+
+
+@pytest.fixture(autouse=True)
+def no_polls():
+    """The receiver isn't asked every minute, except where a test is about that."""
+    with patch("custom_components.bambu_printer_webhook.manager.POLL_INTERVAL", timedelta(days=365)):
+        yield
 
 
 @pytest.fixture
@@ -366,7 +374,7 @@ def _sliced(layers: int) -> bytes:
     return buffer.getvalue()
 
 
-async def test_a_cached_3mf_of_other_layers_is_not_sent_and_the_prints_own_comes_from_the_printer_after(
+async def test_the_running_prints_3mf_comes_from_the_printer_itself_not_from_the_cache(
     hass: HomeAssistant, bambu: BambuSetup, webhook: AiohttpClientMocker, freezer, storage, tmp_path, monkeypatch
 ) -> None:
     hass.config.config_dir = str(tmp_path)
@@ -379,23 +387,37 @@ async def test_a_cached_3mf_of_other_layers_is_not_sent_and_the_prints_own_comes
     monkeypatch.setattr(
         storage, "files", [StoredFile("/cache/Christmas Moose.gcode.3mf", 9, datetime(2026, 10, 26, 8, 17, tzinfo=UTC))]
     )
+    monkeypatch.setattr(storage, "read", lambda _self, _path: _sliced(853))
     await _set_up(hass)
 
     await _tick(hass, freezer, 31)
     await _tick(hass, freezer, 301)
 
-    assert not any(isinstance(call[2], FormData) for call in webhook.mock_calls), "no 3mf while printing"
+    models = [_form(call[2]) for call in webhook.mock_calls if isinstance(call[2], FormData)]
+    assert [(model["file"][0], model["source"], model["start_time"]) for model in models] == [
+        ("Christmas Moose.gcode.3mf", "printer", START)
+    ]
 
-    monkeypatch.setattr(storage, "read", lambda _self, _path: _sliced(853))
+
+async def test_a_cached_3mf_of_other_layers_is_not_sent_without_the_prints_own_on_the_printer(
+    hass: HomeAssistant, bambu: BambuSetup, webhook: AiohttpClientMocker, freezer, storage, tmp_path, monkeypatch
+) -> None:
+    hass.config.config_dir = str(tmp_path)
+    hass.config_entries.async_update_entry(bambu.entry, options={"host": "192.168.1.50", "access_code": "12345678"})
+    hass.states.async_set(bambu.entity_ids["online"], "on")
+    _set_print(hass, bambu, "running")
+    hass.states.async_set(bambu.entity_ids["total_layers"], "853")
+    _cache_model(hass, "38798457-Christmas Moose.gcode.3mf", "2026-10-26T08:18:00+00:00").write_bytes(_sliced(939))
+    monkeypatch.setattr(storage, "files", [])
+    await _set_up(hass)
+
+    await _tick(hass, freezer, 31)
     hass.states.async_set(bambu.entity_ids["print_status"], "finish")
     await hass.async_block_till_done()
     await _tick(hass, freezer, 31)
     await hass.async_block_till_done(wait_background_tasks=True)
 
-    models = [_form(call[2]) for call in webhook.mock_calls if isinstance(call[2], FormData)]
-    assert [(model["kind"], model["file"][0], model["start_time"]) for model in models] == [
-        ("model", "Christmas Moose.gcode.3mf", START)
-    ]
+    assert not any(isinstance(call[2], FormData) for call in webhook.mock_calls)
 
 
 async def test_a_file_the_webhook_refused_is_sent_again_with_the_next_state(
@@ -502,7 +524,6 @@ async def test_the_interval_can_be_changed_in_the_options(
         "energy_sensors": {},
         "price_entity": None,
         "price_per_kwh": None,
-        "history_since": None,
     }
     await _tick(hass, freezer, 31)
     webhook.mock_calls.clear()
@@ -607,13 +628,18 @@ def _history_posts(webhook: AiohttpClientMocker) -> list[dict[str, object]]:
     ]
 
 
-async def test_the_prints_on_the_printers_storage_are_sent_once(
-    hass: HomeAssistant, bambu: BambuSetup, webhook: AiohttpClientMocker, freezer, storage
+_STORED_PRINTS = {"kind": "stored_prints", "printer_serial": SERIAL, "since": "2026-09-01"}
+
+
+async def test_the_prints_on_the_printers_storage_asked_for_are_sent_once(
+    hass: HomeAssistant, bambu: BambuSetup, aioclient_mock: AiohttpClientMocker, freezer, storage
 ) -> None:
     hass.config_entries.async_update_entry(bambu.entry, options={"host": "192.168.1.50", "access_code": "12345678"})
     hass.states.async_set(bambu.entity_ids["print_status"], "idle")
     hass.states.async_set(bambu.entity_ids["online"], "on")
-    await _set_up(hass, {"history_since": "2026-09-01"})
+    aioclient_mock.post(URL, json={"ok": True, "requests": [_STORED_PRINTS]})
+    webhook = aioclient_mock
+    await _set_up(hass)
 
     await _tick(hass, freezer, 31)
     await hass.async_block_till_done(wait_background_tasks=True)
@@ -640,13 +666,31 @@ async def test_the_prints_on_the_printers_storage_are_sent_once(
     assert storage.opened == [("192.168.1.50", "12345678")]
 
 
-async def test_the_storage_is_not_read_while_the_printer_prints(
-    hass: HomeAssistant, bambu: BambuSetup, webhook: AiohttpClientMocker, freezer, storage
+async def test_the_receiver_is_asked_every_minute_and_its_requests_go_to_their_printer(
+    hass: HomeAssistant, bambu: BambuSetup, aioclient_mock: AiohttpClientMocker, freezer, storage
+) -> None:
+    hass.config_entries.async_update_entry(bambu.entry, options={"host": "192.168.1.50", "access_code": "12345678"})
+    hass.states.async_set(bambu.entity_ids["print_status"], "idle")
+    hass.states.async_set(bambu.entity_ids["online"], "on")
+    aioclient_mock.post(URL, json={"ok": True, "requests": [_STORED_PRINTS, {**_STORED_PRINTS, "printer_serial": "x"}]})
+    with patch("custom_components.bambu_printer_webhook.manager.POLL_INTERVAL", timedelta(minutes=1)):
+        await _set_up(hass)
+        await _tick(hass, freezer, 61)
+        await hass.async_block_till_done(wait_background_tasks=True)
+
+    polls = [call[2] for call in aioclient_mock.mock_calls if isinstance(call[2], dict) and call[2].get("ping")]
+    assert polls[0] == {"schema_version": 1, "ping": True, "printers": [SERIAL]}
+    assert storage.opened == [("192.168.1.50", "12345678")]
+
+
+async def test_the_prints_on_the_storage_are_not_read_while_the_printer_prints(
+    hass: HomeAssistant, bambu: BambuSetup, aioclient_mock: AiohttpClientMocker, freezer, storage
 ) -> None:
     hass.config_entries.async_update_entry(bambu.entry, options={"host": "192.168.1.50", "access_code": "12345678"})
     hass.states.async_set(bambu.entity_ids["print_status"], "running")
     hass.states.async_set(bambu.entity_ids["online"], "on")
-    await _set_up(hass, {"history_since": "2026-09-01"})
+    aioclient_mock.post(URL, json={"ok": True, "requests": [_STORED_PRINTS]})
+    await _set_up(hass)
 
     await _tick(hass, freezer, 31)
     await hass.async_block_till_done(wait_background_tasks=True)
@@ -654,7 +698,7 @@ async def test_the_storage_is_not_read_while_the_printer_prints(
     assert storage.opened == []
 
 
-async def test_without_a_day_to_import_from_the_storage_is_left_alone(
+async def test_unasked_the_storage_is_left_alone(
     hass: HomeAssistant, bambu: BambuSetup, webhook: AiohttpClientMocker, freezer, storage
 ) -> None:
     hass.config_entries.async_update_entry(bambu.entry, options={"host": "192.168.1.50", "access_code": "12345678"})
@@ -670,11 +714,12 @@ async def test_without_a_day_to_import_from_the_storage_is_left_alone(
 
 
 async def test_without_a_local_address_the_storage_is_left_alone(
-    hass: HomeAssistant, bambu: BambuSetup, webhook: AiohttpClientMocker, freezer, storage
+    hass: HomeAssistant, bambu: BambuSetup, aioclient_mock: AiohttpClientMocker, freezer, storage
 ) -> None:
     hass.states.async_set(bambu.entity_ids["print_status"], "idle")
     hass.states.async_set(bambu.entity_ids["online"], "on")
-    await _set_up(hass, {"history_since": "2026-09-01"})
+    aioclient_mock.post(URL, json={"ok": True, "requests": [_STORED_PRINTS]})
+    await _set_up(hass)
 
     await _tick(hass, freezer, 31)
     await hass.async_block_till_done(wait_background_tasks=True)
@@ -758,3 +803,18 @@ async def test_a_3mf_of_another_weight_than_the_print_asked_for_is_not_sent(
     assert not any(
         isinstance(call[2], FormData) and _form(call[2])["kind"] == "model" for call in aioclient_mock.mock_calls
     )
+
+
+async def test_a_printer_without_local_access_shows_under_repairs_until_it_has_it(
+    hass: HomeAssistant, bambu: BambuSetup, webhook: AiohttpClientMocker, freezer
+) -> None:
+    issues = ir.async_get(hass)
+    await _set_up(hass)
+    await _tick(hass, freezer, 31)
+
+    assert issues.async_get_issue(DOMAIN, f"no_local_access_{SERIAL}") is not None
+
+    hass.config_entries.async_update_entry(bambu.entry, options={"host": "192.168.1.50", "access_code": "12345678"})
+    await _tick(hass, freezer, 301)
+
+    assert issues.async_get_issue(DOMAIN, f"no_local_access_{SERIAL}") is None
